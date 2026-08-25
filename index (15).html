@@ -1,0 +1,2764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>WORLDS — Explore any place</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23070b10' stroke='%239be7ff' stroke-width='2'/%3E%3Ccircle cx='12' cy='14' r='3' fill='%231a3a28'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.1/maplibre-gl.css" />
+  <!--
+    WORLDS — explore any place.
+    No keys required. Optional Mapillary (street photos) and Google Maps (photoreal Earth).
+    Serve over http://localhost — not file://
+      python3 -m http.server 8000
+  -->
+  <style>
+    :root {
+      --bg: #07090c;
+      --ink: #edf2f6;
+      --muted: #8b96a3;
+      --faint: #5c6670;
+      --line: rgba(255,255,255,.1);
+      --glass: rgba(9,12,16,.62);
+      --accent: #9be7ff;
+      --accent-glow: rgba(155,231,255,.28);
+      --good: #9dffb0;
+      --warn: #ffd29a;
+      --shadow: 0 24px 64px rgba(0,0,0,.45);
+      --sans: "Segoe UI","Helvetica Neue","SF Pro Display",system-ui,sans-serif;
+      --mono: ui-monospace, Menlo, Consolas, monospace;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; }
+    html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; border: 0; background: none; }
+    button:disabled { opacity: .45; cursor: default; }
+
+    #map-root, #earth-root, #scene-root { position: absolute; inset: 0; }
+    #earth-root { display: none; z-index: 2; }
+    #earth-root gmp-map-3d { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #scene-root { display: none; z-index: 3; }
+    #app[data-engine="google3d"] #earth-root,
+    #app[data-engine="google2d"] #earth-root { display: block; }
+    #app[data-engine="google3d"] #map-root,
+    #app[data-engine="google2d"] #map-root { opacity: 0; pointer-events: none; }
+    #app[data-mode="scene"] #scene-root { display: block; }
+    #app[data-mode="scene"] #map-root,
+    #app[data-mode="scene"] #earth-root { opacity: 0; pointer-events: none; }
+
+    .glass {
+      background: var(--glass);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(20px) saturate(140%);
+      -webkit-backdrop-filter: blur(20px) saturate(140%);
+    }
+
+    #lobby {
+      position: absolute; inset: 0; z-index: 55;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px 16px;
+      background:
+        radial-gradient(900px 480px at 50% 115%, rgba(46,110,168,.32), transparent 58%),
+        radial-gradient(640px 320px at 78% 8%, rgba(155,231,255,.09), transparent 42%),
+        linear-gradient(180deg, #04070c 0%, #070b12 52%, #05080d 100%);
+    }
+    #app:not([data-mode="lobby"]) #lobby { display: none; }
+    .planet {
+      position: absolute; width: min(560px, 80vw); height: min(560px, 80vw);
+      right: -12vw; bottom: -18vh; border-radius: 50%; pointer-events: none;
+      background:
+        radial-gradient(circle at 32% 28%, #8ec4e4 0%, #2a6a94 22%, #12344c 48%, #071018 68%);
+      box-shadow: inset -48px -24px 90px rgba(0,0,0,.55), 0 0 140px rgba(80,160,220,.16);
+    }
+    .stars {
+      position: absolute; inset: 0; pointer-events: none; opacity: .55;
+      background-image:
+        radial-gradient(1px 1px at 12% 18%, #fff 50%, transparent 51%),
+        radial-gradient(1px 1px at 28% 72%, #cfe 50%, transparent 51%),
+        radial-gradient(1.4px 1.4px at 66% 22%, #fff 50%, transparent 51%),
+        radial-gradient(1px 1px at 81% 64%, #def 50%, transparent 51%),
+        radial-gradient(1px 1px at 44% 40%, #fff 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 8% 88%, #cdf 50%, transparent 51%);
+    }
+    #lobby-card {
+      position: relative; width: min(520px, 100%); padding: 28px 24px 22px;
+      border-radius: 24px; z-index: 1;
+    }
+    #lobby-card .mark { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .42em; padding-left: .42em; }
+    #lobby-card h1 { margin: 14px 0 8px; font-size: clamp(28px, 5vw, 38px); letter-spacing: .06em; font-weight: 700; }
+    #lobby-card .lede { margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .key-block { margin: 0 0 14px; }
+    .key-block label { display: block; font-size: 10px; letter-spacing: .16em; color: var(--faint); margin-bottom: 6px; }
+    .key-block input {
+      width: 100%; height: 42px; border-radius: 12px; border: 1px solid var(--line);
+      background: rgba(0,0,0,.32); padding: 0 12px; outline: none;
+    }
+    .key-block input:focus { border-color: rgba(155,231,255,.45); }
+    .key-block .hint { margin: 6px 0 0; font-size: 11px; color: var(--faint); line-height: 1.45; }
+    .key-block a { color: var(--accent); text-decoration: none; }
+    .remember { display: flex; align-items: center; gap: 8px; margin: 4px 0 18px; font-size: 12px; color: var(--muted); }
+    .remember input { accent-color: var(--accent); }
+    #enter-worlds {
+      width: 100%; height: 52px; border-radius: 999px; background: var(--accent); color: #061018;
+      font-size: 12px; font-weight: 800; letter-spacing: .18em; box-shadow: 0 0 28px var(--accent-glow);
+    }
+    #enter-skip {
+      width: 100%; height: 40px; margin-top: 8px; border-radius: 999px;
+      font-size: 11px; letter-spacing: .14em; color: var(--muted);
+    }
+    #lobby-status { min-height: 18px; margin: 10px 0 0; font-size: 12px; color: var(--accent); text-align: center; }
+    .engine-note {
+      margin: 14px 0 0; padding: 10px 12px; border-radius: 12px;
+      background: rgba(155,231,255,.06); border: 1px solid rgba(155,231,255,.12);
+      font-size: 12px; color: var(--muted); line-height: 1.45;
+    }
+
+    #brand {
+      position: absolute; top: calc(22px + var(--safe-top)); left: 50%;
+      transform: translateX(-50%); z-index: 12; text-align: center; pointer-events: none;
+    }
+    #brand .mark { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .42em; padding-left: .42em; }
+    #brand .tag { margin: 8px 0 0; font-size: 10px; letter-spacing: .32em; color: var(--muted); }
+    #app[data-mode="lobby"] #brand { display: none; }
+    #app[data-mode="explore"] #brand, #app[data-mode="scene"] #brand, #app[data-mode="flying"] #brand {
+      left: 18px; transform: none; text-align: left;
+    }
+    #app[data-mode="explore"] #brand .tag, #app[data-mode="scene"] #brand .tag, #app[data-mode="flying"] #brand .tag { display: none; }
+
+    #search-shell {
+      position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%);
+      width: min(560px, calc(100vw - 28px)); z-index: 14; display: flex; flex-direction: column; gap: 12px;
+    }
+    #app[data-mode="selected"] #search-shell { top: 32%; }
+    #app[data-mode="lobby"] #search-shell,
+    #app[data-mode="explore"] #search-shell,
+    #app[data-mode="flying"] #search-shell,
+    #app[data-mode="scene"] #search-shell { opacity: 0; pointer-events: none; }
+
+    #search-bar { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 16px; border-radius: 999px; }
+    #search-input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font-size: 16px; }
+    #search-input::placeholder { color: var(--faint); }
+
+    #suggest-list { list-style: none; margin: 0; padding: 8px; border-radius: 16px; max-height: 42vh; overflow: auto; display: none; }
+    #suggest-list.is-on { display: block; }
+    #suggest-list li { padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+    #suggest-list li:hover, #suggest-list li.is-on { background: rgba(255,255,255,.06); }
+    #suggest-list .main { font-weight: 600; font-size: 14px; }
+    #suggest-list .sub { font-size: 12px; color: var(--muted); }
+
+    #chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    #app[data-mode="selected"] #chips { display: none; }
+    .chip { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; background: rgba(8,12,16,.35); }
+
+    #dest-card { display: none; padding: 20px; border-radius: 20px; }
+    #dest-card.is-on { display: block; }
+    #dest-name { margin: 0; font-size: 20px; letter-spacing: .14em; font-weight: 700; }
+    #dest-sub { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    #dest-coords { margin: 14px 0; font-family: var(--mono); font-size: 12px; color: var(--accent); line-height: 1.6; }
+    .dest-actions { display: flex; flex-direction: column; gap: 8px; }
+    .btn-primary, .btn-walk {
+      width: 100%; height: 48px; border-radius: 999px; font-size: 12px; font-weight: 800; letter-spacing: .18em;
+    }
+    .btn-primary { background: var(--ink); color: #0a0d11; }
+    .btn-walk { background: var(--accent); color: #061018; box-shadow: 0 0 24px var(--accent-glow); }
+    .btn-ghost {
+      height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line);
+      font-size: 10px; font-weight: 700; letter-spacing: .16em;
+    }
+    .icon-btn { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); }
+
+    #hud {
+      position: absolute; left: 16px; bottom: calc(16px + var(--safe-bottom));
+      z-index: 16; width: min(300px, calc(100vw - 80px)); padding: 14px; border-radius: 16px;
+      display: none;
+    }
+    #app[data-mode="explore"] #hud, #app[data-mode="scene"] #hud { display: block; }
+    #hud-name { margin: 0; font-size: 13px; letter-spacing: .16em; font-weight: 700; }
+    #hud-sub { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+    #hud-status { margin: 8px 0 0; font-size: 11px; color: var(--accent); }
+    #hud-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+    #flight {
+      position: absolute; inset: 0; z-index: 20; pointer-events: none; opacity: 0;
+      display: flex; flex-direction: column; justify-content: flex-end;
+      padding: 24px 24px calc(24px + var(--safe-bottom));
+    }
+    #app[data-mode="flying"] #flight { opacity: 1; }
+    #flight-stage { margin: 0 0 6px; font-size: 11px; letter-spacing: .3em; color: var(--accent); }
+    #flight-title { margin: 0; font-size: clamp(28px, 5vw, 46px); letter-spacing: .1em; }
+
+    #progress {
+      position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
+      z-index: 21; width: min(420px, calc(100vw - 28px)); padding: 16px 18px; border-radius: 16px; display: none;
+    }
+    #progress.is-on { display: block; }
+    #progress p { margin: 0; font-size: 13px; letter-spacing: .08em; }
+    #progress .bar { margin-top: 10px; height: 3px; background: rgba(255,255,255,.08); border-radius: 3px; overflow: hidden; }
+    #progress .bar i { display: block; height: 100%; width: 10%; background: var(--accent); transition: width .3s ease; }
+
+    #gallery {
+      position: absolute; right: 16px; bottom: calc(16px + var(--safe-bottom));
+      z-index: 16; width: min(220px, 42vw); padding: 10px; border-radius: 14px; display: none;
+    }
+    #app[data-mode="explore"] #gallery.is-on { display: block; }
+    #gallery img { width: 100%; height: 88px; object-fit: cover; border-radius: 8px; display: block; margin-top: 6px; background: #111; }
+    #gallery .cap { font-size: 10px; letter-spacing: .12em; color: var(--faint); }
+
+    #sources-btn, #help-btn, #keys-btn, #style-btn {
+      position: absolute; z-index: 18; height: 34px; padding: 0 12px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; letter-spacing: .14em;
+    }
+    #help-btn { right: 16px; bottom: calc(16px + var(--safe-bottom)); width: 36px; padding: 0; }
+    #sources-btn { right: 58px; bottom: calc(16px + var(--safe-bottom)); }
+    #keys-btn { right: 148px; bottom: calc(16px + var(--safe-bottom)); }
+    #style-btn { right: 210px; bottom: calc(16px + var(--safe-bottom)); }
+    #app[data-mode="lobby"] #sources-btn,
+    #app[data-mode="lobby"] #help-btn,
+    #app[data-mode="lobby"] #keys-btn,
+    #app[data-mode="lobby"] #style-btn { display: none; }
+    #help-panel, #sources-panel {
+      position: absolute; right: 16px; bottom: calc(58px + var(--safe-bottom));
+      z-index: 22; width: min(360px, calc(100vw - 24px)); padding: 16px; border-radius: 16px; display: none;
+    }
+    #help-panel.is-on, #sources-panel.is-on { display: block; }
+    #help-panel h3, #sources-panel h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: .2em; }
+    #help-panel .row, #sources-panel p { display: flex; justify-content: space-between; font-size: 13px; margin: 6px 0; color: var(--muted); }
+    #sources-panel p { display: block; line-height: 1.45; font-size: 12px; }
+
+    #toast {
+      position: absolute; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translateX(-50%);
+      z-index: 40; max-width: min(440px, calc(100vw - 24px)); padding: 12px 14px; border-radius: 12px;
+      font-size: 12px; text-align: center; opacity: 0; pointer-events: none;
+    }
+    #toast.is-on { opacity: 1; }
+    #toast strong { display: block; letter-spacing: .14em; margin-bottom: 4px; }
+
+    #file-warn {
+      display: none; position: absolute; left: 50%; top: calc(10px + var(--safe-top)); transform: translateX(-50%);
+      z-index: 70; width: min(560px, calc(100vw - 20px)); padding: 12px; border-radius: 12px;
+      background: #2a1510; border: 1px solid rgba(255,180,160,.35); color: #ffd8cc; font-size: 13px; text-align: center;
+    }
+    #file-warn.is-on { display: block; }
+    #file-warn code { color: var(--accent); }
+
+    #boot {
+      position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%);
+      z-index: 25; padding: 14px 18px; border-radius: 14px; display: none; text-align: center;
+    }
+    #boot.is-on { display: block; }
+    #boot p { margin: 0; font-size: 12px; letter-spacing: .12em; color: var(--accent); }
+
+    .maplibregl-ctrl-attrib { font-size: 10px; }
+    .maplibregl-ctrl-bottom-left { display: none; }
+
+    @media (max-width: 720px) {
+      #search-shell { top: auto; bottom: calc(22px + var(--safe-bottom)); transform: translate(-50%, 0); }
+      #app[data-mode="selected"] #search-shell { top: auto; }
+      #keys-btn, #style-btn { display: none; }
+      .planet { opacity: .45; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" data-mode="lobby" data-engine="none">
+    <div id="map-root"></div>
+    <div id="earth-root"></div>
+    <canvas id="scene-root"></canvas>
+    <div id="file-warn">Open over http, not as a file. Run <code>python3 -m http.server 8000</code> then visit <code>http://localhost:8000</code></div>
+
+    <div id="lobby">
+      <div class="stars"></div>
+      <div class="planet"></div>
+      <section id="lobby-card" class="glass">
+        <p class="mark">WORLDS</p>
+        <h1>Explore Earth.</h1>
+        <p class="lede">Search any place, fly there, walk a 3D reconstruction. Keys are optional and stay in this browser — never uploaded by WORLDS.</p>
+
+        <div class="key-block">
+          <label for="lobby-mly">MAPILLARY TOKEN — street photos</label>
+          <input id="lobby-mly" type="password" placeholder="MLY|…" autocomplete="off" spellcheck="false" />
+          <p class="hint">Free at <a href="https://www.mapillary.com/dashboard/developers" target="_blank" rel="noopener">mapillary.com/dashboard/developers</a>. Without it, KartaView / Wikimedia / Panoramax still load.</p>
+        </div>
+        <div class="key-block">
+          <label for="lobby-gmap">GOOGLE MAPS KEY — photoreal Earth</label>
+          <input id="lobby-gmap" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+          <p class="hint">Needs a billed Google Cloud project + <b>Maps JavaScript API</b>. Restrict the key to your site. Photoreal 3D also needs the 3D Maps / Map Tiles APIs. Leave empty for open satellite Earth.</p>
+        </div>
+        <label class="remember"><input id="lobby-remember" type="checkbox" checked /> Remember keys on this device</label>
+        <button id="enter-worlds" type="button" onclick="window.__worldsEnter ? window.__worldsEnter(true) : window.__worldsDead && window.__worldsDead()">ENTER WORLDS</button>
+        <button id="enter-skip" type="button" onclick="window.__worldsEnter ? window.__worldsEnter(false) : window.__worldsDead && window.__worldsDead()">CONTINUE WITHOUT KEYS</button>
+        <p id="lobby-status"></p>
+        <p class="engine-note" id="lobby-engine-note">Open Earth uses satellite imagery + OpenStreetMap. No API key. If a tile host is blocked, WORLDS switches automatically.</p>
+      </section>
+    </div>
+
+    <header id="brand">
+      <p class="mark">WORLDS</p>
+      <p class="tag">EXPLORE ANY PLACE</p>
+    </header>
+
+    <section id="search-shell">
+      <div id="search-bar" class="glass">
+        <input id="search-input" type="text" placeholder="Search any place..." autocomplete="off" spellcheck="false" />
+      </div>
+      <ul id="suggest-list" class="glass"></ul>
+      <div id="chips">
+        <button class="chip" data-q="Varanasi">Varanasi</button>
+        <button class="chip" data-q="Lucknow">Lucknow</button>
+        <button class="chip" data-q="Tokyo">Tokyo</button>
+        <button class="chip" data-q="Paris">Paris</button>
+        <button class="chip" data-q="Patagonia">Patagonia</button>
+        <button class="chip" data-q="Kilimanjaro">Kilimanjaro</button>
+      </div>
+      <article id="dest-card" class="glass">
+        <div style="display:flex;justify-content:space-between;gap:12px">
+          <div>
+            <h2 id="dest-name">—</h2>
+            <p id="dest-sub"></p>
+          </div>
+          <button class="icon-btn" id="dest-close" type="button">✕</button>
+        </div>
+        <div id="dest-coords"></div>
+        <div class="dest-actions">
+          <button class="btn-walk" id="go-there" type="button">FLY THERE</button>
+        </div>
+      </article>
+    </section>
+
+    <aside id="hud" class="glass">
+      <p id="hud-name">—</p>
+      <p id="hud-sub"></p>
+      <p id="hud-status">Open Earth</p>
+      <div id="hud-actions">
+        <button class="btn-ghost" id="exit-btn" type="button">EXIT</button>
+        <button class="btn-ghost" id="explore-3d" type="button">EXPLORE 3D</button>
+        <button class="btn-ghost" id="scene-exit" type="button" hidden>MAP</button>
+      </div>
+    </aside>
+
+    <aside id="gallery" class="glass">
+      <div class="cap">STREET IMAGERY</div>
+      <img id="gallery-img" alt="Nearby street photo" referrerpolicy="no-referrer" />
+      <div class="cap" id="gallery-cap">KartaView / OSM</div>
+    </aside>
+
+    <div id="progress" class="glass">
+      <p id="progress-copy">Finding imagery…</p>
+      <div class="bar"><i id="progress-bar"></i></div>
+    </div>
+
+    <div id="boot" class="glass"><p id="boot-copy">Loading Earth…</p></div>
+
+    <div id="flight">
+      <p id="flight-stage">EARTH</p>
+      <h2 id="flight-title">WORLDS</h2>
+    </div>
+
+    <button id="style-btn" class="glass" type="button">SAT</button>
+    <button id="keys-btn" class="glass" type="button">KEYS</button>
+    <button id="sources-btn" class="glass" type="button">SOURCES</button>
+    <button id="help-btn" class="glass" type="button">?</button>
+    <div id="help-panel" class="glass">
+      <h3>CONTROLS</h3>
+      <div class="row"><span>Drag</span><b>Pan map</b></div>
+      <div class="row"><span>Scroll</span><b>Zoom</b></div>
+      <div class="row"><span>Right-drag / Ctrl-drag</span><b>Pitch / rotate</b></div>
+      <div class="row"><span>In 3D: WASD</span><b>Walk</b></div>
+      <div class="row"><span>In 3D: Mouse</span><b>Look</b></div>
+      <div class="row"><span>In 3D: Space</span><b>Jump</b></div>
+    </div>
+    <div id="sources-panel" class="glass">
+      <h3>DATA &amp; IMAGERY SOURCES</h3>
+      <p>Map data © OpenStreetMap contributors (ODbL).</p>
+      <p>Open Earth: Esri World Imagery (Maxar / Earthstar) + OSM raster fallback. Vector streets: OpenFreeMap when reachable.</p>
+      <p>Terrain: AWS Terrain Tiles (Terrarium / Mapzen DEM) when available.</p>
+      <p>Street imagery: Mapillary (optional token) → KartaView → Wikimedia Commons → Panoramax.</p>
+      <p>Search: Open-Meteo Geocoding + Photon (Google Geocoding is skipped — it requires billing).</p>
+      <p>Walk-mode builds textured 3D surfaces from street photos with Depth Anything V2 (transformers.js) plus SfM (jsfeat + ml-matrix). Relative depth, not COLMAP dense MVS, not Google photoreal tiles.</p>
+      <p>Optional Google Earth uses <em>your</em> Maps JavaScript key in this browser only.</p>
+      <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.16em;color:#5c6670">MAPILLARY TOKEN</label>
+      <input id="mly-token" type="password" placeholder="MLY|…" autocomplete="off" style="width:100%;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.28);padding:0 10px" />
+      <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.16em;color:#5c6670">GOOGLE MAPS KEY</label>
+      <input id="gmap-token" type="password" placeholder="AIza…" autocomplete="off" style="width:100%;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.28);padding:0 10px" />
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn-ghost" id="mly-save" type="button">SAVE KEYS</button>
+        <button class="btn-ghost" id="apply-earth" type="button">APPLY EARTH</button>
+      </div>
+    </div>
+    <div id="toast" class="glass"></div>
+  </div>
+
+  <script>
+    /* Not a module: a failed Three.js import used to abort the whole app. */
+    let THREE = null;
+    const THREE_URLS = [
+      "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "https://esm.sh/three@0.170.0"
+    ];
+
+    const LS_MLY = "WORLDS_MAPILLARY";
+    const LS_GMAP = "WORLDS_GOOGLE";
+    const LS_REMEMBER = "WORLDS_REMEMBER";
+
+    const ML_JS = [
+      "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.1/maplibre-gl.min.js",
+      "https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.js",
+      "https://unpkg.com/maplibre-gl@5.6.1/dist/maplibre-gl.js"
+    ];
+    const OFM_LIBERTY = "https://tiles.openfreemap.org/styles/liberty";
+    const OFM_DARK = "https://tiles.openfreemap.org/styles/dark";
+    const TERRAIN_TILES = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+
+    const app = document.getElementById("app");
+    const searchInput = document.getElementById("search-input");
+    const suggestList = document.getElementById("suggest-list");
+    const destCard = document.getElementById("dest-card");
+    const toastEl = document.getElementById("toast");
+    const lobbyStatus = document.getElementById("lobby-status");
+    const lobbyEngineNote = document.getElementById("lobby-engine-note");
+
+    const state = {
+      mode: "lobby",
+      engine: "none",
+      map: null,
+      g3d: null,
+      g2d: null,
+      basemap: "sat",
+      selected: null,
+      photos: [],
+      buildings: [],
+      recon: null,
+      flyId: 0,
+      searchSeq: 0,
+      suggestions: [],
+      mapReady: false
+    };
+
+    const scene = {
+      renderer: null,
+      three: null,
+      camera: null,
+      world: null,
+      objects: [],
+      keys: Object.create(null),
+      vel: { x: 0, y: 0, z: 0 },
+      yaw: 0,
+      pitch: 0,
+      grounded: true,
+      raf: 0,
+      last: 0,
+      origin: null
+    };
+
+    if (location.protocol === "file:") {
+      document.getElementById("file-warn").classList.add("is-on");
+    }
+
+    const memStore = Object.create(null);
+    function storageForWrite() {
+      const remember = document.getElementById("lobby-remember")
+        ? document.getElementById("lobby-remember").checked
+        : true;
+      try { return remember ? localStorage : sessionStorage; } catch (_) { return null; }
+    }
+    function readKey(name) {
+      try {
+        const v = (localStorage.getItem(name) || sessionStorage.getItem(name) || memStore[name] || "");
+        return String(v).trim();
+      } catch (_) {
+        return String(memStore[name] || "").trim();
+      }
+    }
+    function writeKey(name, value) {
+      memStore[name] = value || "";
+      try {
+        sessionStorage.removeItem(name);
+        localStorage.removeItem(name);
+        const store = storageForWrite();
+        if (value && store) store.setItem(name, value);
+      } catch (_) {}
+    }
+    function mapillaryToken() { return readKey(LS_MLY); }
+    function googleKey() { return readKey(LS_GMAP); }
+
+    function setMode(mode) {
+      state.mode = mode;
+      app.dataset.mode = mode;
+      document.getElementById("explore-3d").hidden = mode === "scene";
+      document.getElementById("scene-exit").hidden = mode !== "scene";
+    }
+    function setEngine(kind) {
+      state.engine = kind;
+      app.dataset.engine = kind;
+    }
+
+    function toast(title, body, ms) {
+      toastEl.innerHTML = "<strong>" + title + "</strong>" + (body || "");
+      toastEl.classList.add("is-on");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => toastEl.classList.remove("is-on"), ms || 4200);
+    }
+    function setLobbyStatus(text) { lobbyStatus.textContent = text || ""; }
+    function showBoot(text) {
+      document.getElementById("boot-copy").textContent = text || "Loading Earth…";
+      document.getElementById("boot").classList.add("is-on");
+    }
+    function hideBoot() { document.getElementById("boot").classList.remove("is-on"); }
+
+    function debounce(fn, wait) {
+      let t = 0;
+      return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), wait); };
+    }
+    function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
+    function fmtLat(lat) { return Math.abs(lat).toFixed(4) + "° " + (lat >= 0 ? "N" : "S"); }
+    function fmtLng(lng) { return Math.abs(lng).toFixed(4) + "° " + (lng >= 0 ? "E" : "W"); }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve(src);
+        s.onerror = () => reject(new Error("script " + src));
+        document.head.appendChild(s);
+      });
+    }
+    async function loadFirst(urls) {
+      let last = null;
+      for (const url of urls) {
+        try { return await loadScript(url); } catch (err) { last = err; }
+      }
+      throw last || new Error("all scripts failed");
+    }
+
+    async function loadThree() {
+      if (THREE && THREE.WebGLRenderer) return THREE;
+      let last = null;
+      for (const url of THREE_URLS) {
+        try {
+          const mod = await import(url);
+          if (mod && mod.WebGLRenderer) {
+            THREE = mod;
+            return THREE;
+          }
+        } catch (err) { last = err; }
+      }
+      throw last || new Error("Three.js failed to load");
+    }
+
+    /* ---------- styles (no API key) ---------- */
+    function satelliteStyle() {
+      return {
+        version: 8,
+        name: "WORLDS Satellite",
+        sources: {
+          esri: {
+            type: "raster",
+            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: "Tiles © Esri — Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+          },
+          places: {
+            type: "raster",
+            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: "Esri"
+          }
+        },
+        layers: [
+          { id: "bg", type: "background", paint: { "background-color": "#02060c" } },
+          { id: "sat", type: "raster", source: "esri", paint: { "raster-fade-duration": 80, "raster-saturation": -0.05, "raster-contrast": 0.06 } },
+          { id: "places", type: "raster", source: "places", paint: { "raster-fade-duration": 80 } }
+        ]
+      };
+    }
+    function osmRasterStyle() {
+      return {
+        version: 8,
+        name: "WORLDS OSM",
+        sources: {
+          osm: {
+            type: "raster",
+            tiles: [
+              "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+              "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+              "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            ],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: "© OpenStreetMap contributors"
+          }
+        },
+        layers: [
+          { id: "bg", type: "background", paint: { "background-color": "#0b1016" } },
+          { id: "osm", type: "raster", source: "osm" }
+        ]
+      };
+    }
+
+    /* ---------- GeoProvider ---------- */
+    const GeoProvider = {
+      async searchPlace(query) {
+        const q = String(query || "").trim();
+        if (q.length < 2) return [];
+        try {
+          const url = "https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(q) + "&count=8&language=en&format=json";
+          const res = await fetch(url);
+          const data = await res.json();
+          return (data.results || []).map((r) => ({
+            name: r.name,
+            formattedAddress: [r.admin1, r.country].filter(Boolean).join(", "),
+            lat: r.latitude,
+            lng: r.longitude,
+            types: [r.feature_code || "place"]
+          }));
+        } catch (_) {
+          const url = "https://photon.komoot.io/api/?q=" + encodeURIComponent(q) + "&limit=8";
+          const res = await fetch(url);
+          const data = await res.json();
+          return (data.features || []).map((f) => {
+            const p = f.properties || {};
+            const c = f.geometry && f.geometry.coordinates;
+            return {
+              name: p.name || q,
+              formattedAddress: [p.city, p.state, p.country].filter(Boolean).join(", "),
+              lat: c ? c[1] : 0,
+              lng: c ? c[0] : 0,
+              types: [p.osm_value || "place"]
+            };
+          });
+        }
+      },
+
+      async searchGoogle(q) {
+        if (!window.google || !google.maps) return [];
+        let Geocoder = google.maps.Geocoder;
+        if (!Geocoder && typeof google.maps.importLibrary === "function") {
+          const lib = await google.maps.importLibrary("geocoding");
+          Geocoder = lib.Geocoder;
+        }
+        if (!Geocoder) return [];
+        const geocoder = new Geocoder();
+        const resp = await new Promise((resolve, reject) => {
+          geocoder.geocode({ address: q }, (results, status) => {
+            if (status === "OK" || status === "ZERO_RESULTS") resolve({ results: results || [] });
+            else reject(new Error(status));
+          });
+        });
+        return (resp.results || []).slice(0, 8).map((r) => {
+          const loc = r.geometry && r.geometry.location;
+          return {
+            name: (r.address_components && r.address_components[0] && r.address_components[0].long_name) || r.formatted_address,
+            formattedAddress: r.formatted_address,
+            lat: loc ? loc.lat() : 0,
+            lng: loc ? loc.lng() : 0,
+            types: r.types || ["place"]
+          };
+        });
+      },
+
+      parseOverpass(data) {
+        return (data.elements || []).map((el) => {
+          const tags = el.tags || {};
+          const ring = (el.geometry || []).map((g) => ({ lat: g.lat, lng: g.lon }));
+          let h = parseFloat(tags.height);
+          if (!Number.isFinite(h)) {
+            const levels = parseFloat(tags["building:levels"]);
+            h = Number.isFinite(levels) ? levels * 3.2 : 9;
+          }
+          return {
+            id: el.id,
+            name: tags.name || tags["addr:housename"] || "",
+            height: Math.min(Math.max(h, 3.5), 180),
+            ring,
+            tags
+          };
+        }).filter((b) => b.ring && b.ring.length >= 3);
+      },
+
+      async getBuildings(lat, lng, radius) {
+        const q = '[out:json][timeout:18];way["building"](around:' + (radius || 180) + "," + lat + "," + lng + ");out geom tags;";
+        const endpoints = [
+          "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+          "https://overpass-api.de/api/interpreter",
+          "https://overpass.kumi.systems/api/interpreter",
+          "https://overpass.private.coffee/api/interpreter"
+        ];
+        for (const url of endpoints) {
+          try {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain" },
+              body: q
+            });
+            if (!res.ok) continue;
+            const data = await res.json();
+            const buildings = this.parseOverpass(data);
+            if (buildings.length) return buildings;
+          } catch (_) {}
+        }
+        return [];
+      }
+    };
+
+    /* ---------- ImageryProvider ---------- */
+    function kartaUrl(raw) {
+      if (!raw) return "";
+      const s = String(raw).trim();
+      if (/^https?:\/\//i.test(s)) return s;
+      if (s.startsWith("//")) return "https:" + s;
+      const stor = s.match(/^(storage\d+)\/(files\/.+)$/i);
+      if (stor) return "https://" + stor[1].toLowerCase() + ".openstreetcam.org/" + stor[2];
+      const path = s.startsWith("/") ? s : "/" + s;
+      return "https://api.openstreetcam.org" + path;
+    }
+
+    const MapillaryProvider = {
+      async searchNearby(lat, lng) {
+        const token = mapillaryToken();
+        if (!token) return [];
+        const d = 0.002;
+        const bbox = [lng - d, lat - d, lng + d, lat + d].join(",");
+        async function pull(fields) {
+          const qs = new URLSearchParams({ fields: fields, limit: "25", bbox: bbox });
+          const res = await fetch("https://graph.mapillary.com/images?" + qs.toString(), {
+            headers: { Authorization: "OAuth " + token }
+          });
+          if (!res.ok) return null;
+          try { return await res.json(); } catch (_) { return null; }
+        }
+        try {
+          let data = await pull("id,thumb_256_url,geometry,compass_angle");
+          if (!data || !data.data) data = await pull("id,thumb_1024_url,geometry");
+          if (!data || !data.data) return [];
+          return data.data.map((img) => {
+            const c = img.geometry && img.geometry.coordinates;
+            return {
+              id: "mly-" + img.id,
+              source: "Mapillary",
+              url: img.thumb_1024_url || img.thumb_256_url,
+              lat: c ? c[1] : lat,
+              lng: c ? c[0] : lng,
+              heading: img.compass_angle,
+              attribution: "© Mapillary contributors (CC BY-SA)"
+            };
+          }).filter((p) => p.url);
+        } catch (_) {
+          return [];
+        }
+      }
+    };
+
+    const KartaViewProvider = {
+      async searchNearby(lat, lng) {
+        const body = new URLSearchParams({
+          lat: String(lat),
+          lng: String(lng),
+          radius: "400",
+          ipp: "50",
+          page: "1"
+        });
+        const res = await fetch("https://api.openstreetcam.org/1.0/list/nearby-photos/", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body
+        });
+        if (!res.ok) throw new Error("KartaView " + res.status);
+        const data = await res.json();
+        const list = (data.osv && data.osv.photos) || data.currentPageItems || data.photos || [];
+        return list.map((p, i) => {
+          const raw = p.lth_name || p.name || p.th_name || p.image || p.fileThUrl || p.fileurl;
+          return {
+            id: "kv-" + (p.id || i),
+            source: "KartaView",
+            url: kartaUrl(raw),
+            lat: parseFloat(p.lat || p.latitude),
+            lng: parseFloat(p.lng || p.longitude),
+            heading: parseFloat(p.heading || p.compass || 0),
+            attribution: "KartaView / OpenStreetCam contributors (CC BY-SA)"
+          };
+        }).filter((p) => p.url && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+      }
+    };
+
+    const WikimediaProvider = {
+      async searchNearby(lat, lng) {
+        const url = "https://commons.wikimedia.org/w/api.php?action=query&list=geosearch&gscoord=" +
+          encodeURIComponent(lat + "|" + lng) + "&gsradius=600&gslimit=20&gsnamespace=6&format=json&origin=*";
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Wikimedia " + res.status);
+        const data = await res.json();
+        const items = (data.query && data.query.geosearch) || [];
+        return items.filter((it) => /\.(jpe?g|png|webp)$/i.test(it.title || "")).slice(0, 12).map((it) => ({
+          id: "wm-" + it.pageid,
+          source: "Wikimedia",
+          url: "https://commons.wikimedia.org/wiki/Special:FilePath/" + encodeURIComponent(it.title.replace(/^File:/, "")) + "?width=1024",
+          lat: it.lat,
+          lng: it.lon,
+          heading: 0,
+          attribution: "Wikimedia Commons"
+        }));
+      }
+    };
+
+    const PanoramaxProvider = {
+      async searchNearby(lat, lng) {
+        const url = "https://api.panoramax.xyz/api/search?place_position=" + lng + "," + lat + "&place_distance=0-350&limit=20";
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Panoramax " + res.status);
+        const data = await res.json();
+        return (data.features || []).map((f, i) => {
+          const c = f.geometry && f.geometry.coordinates;
+          const assets = f.assets || {};
+          const href = (assets.sd && assets.sd.href) || (assets.thumb && assets.thumb.href) ||
+            (f.assets && Object.values(f.assets)[0] && Object.values(f.assets)[0].href);
+          return {
+            id: "px-" + (f.id || i),
+            source: "Panoramax",
+            url: href,
+            lat: c ? c[1] : lat,
+            lng: c ? c[0] : lng,
+            heading: (f.properties && (f.properties["view:azimuth"] || f.properties.heading)) || 0,
+            attribution: "Panoramax"
+          };
+        }).filter((p) => p.url);
+      }
+    };
+
+    const ImageryProvider = {
+      async searchNearby(lat, lng) {
+        const out = [];
+        const jobs = [
+          MapillaryProvider.searchNearby(lat, lng),
+          KartaViewProvider.searchNearby(lat, lng),
+          WikimediaProvider.searchNearby(lat, lng),
+          PanoramaxProvider.searchNearby(lat, lng)
+        ];
+        const settled = await Promise.allSettled(jobs);
+        settled.forEach((r) => {
+          if (r.status === "fulfilled" && r.value && r.value.length) out.push.apply(out, r.value);
+        });
+        return selectImages(out, lat, lng);
+      }
+    };
+
+    function haversine(a, b) {
+      const R = 6371000, toR = (d) => d * Math.PI / 180;
+      const dLat = toR(b.lat - a.lat), dLng = toR(b.lng - a.lng);
+      const s = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a.lat)) * Math.cos(toR(b.lat)) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+    }
+
+    function selectImages(photos, lat, lng) {
+      const scored = photos.map((p) => {
+        const dist = haversine({ lat, lng }, p);
+        return Object.assign({ dist, score: 1 / (40 + dist) }, p);
+      }).sort((a, b) => b.score - a.score);
+      const picked = [];
+      for (const p of scored) {
+        if (picked.length >= 24) break;
+        if (p.dist > 420) continue;
+        const dup = picked.some((q) => haversine(p, q) < 12);
+        if (!dup) picked.push(p);
+      }
+      return picked;
+    }
+
+    /* ---------- TerrainProvider ---------- */
+    const TerrainProvider = {
+      attached: false,
+      attach(map) {
+        try {
+          if (!map || map.getSource("worlds-dem")) return;
+          map.addSource("worlds-dem", {
+            type: "raster-dem",
+            tiles: [TERRAIN_TILES],
+            tileSize: 256,
+            maxzoom: 12,
+            encoding: "terrarium",
+            attribution: "Terrain © AWS Terrain Tiles / Mapzen"
+          });
+          map.setTerrain({ source: "worlds-dem", exaggeration: 1.15 });
+          if (!map.getLayer("worlds-hill")) {
+            map.addLayer({
+              id: "worlds-hill",
+              type: "hillshade",
+              source: "worlds-dem",
+              paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#0b1016" }
+            });
+          }
+          this.attached = true;
+        } catch (err) {
+          this.attached = false;
+          console.warn("Terrain unavailable", err);
+        }
+      }
+    };
+
+    /* ---------- Cache ---------- */
+    const Cache = {
+      dbp: null,
+      open() {
+        if (this.dbp) return this.dbp;
+        this.dbp = new Promise((resolve, reject) => {
+          const req = indexedDB.open("worlds-open-v1", 1);
+          req.onupgradeneeded = () => req.result.createObjectStore("recon");
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        return this.dbp;
+      },
+      key(loc, photoIds) {
+        return (loc.name || "place").toLowerCase().replace(/\s+/g, "-") + ":v4sfm:" + (photoIds || []).slice(0, 4).join(",");
+      },
+      async get(k) {
+        try {
+          const db = await this.open();
+          return await new Promise((resolve) => {
+            const q = db.transaction("recon").objectStore("recon").get(k);
+            q.onsuccess = () => resolve(q.result || null);
+            q.onerror = () => resolve(null);
+          });
+        } catch (_) { return null; }
+      },
+      async set(k, val) {
+        try {
+          const db = await this.open();
+          db.transaction("recon", "readwrite").objectStore("recon").put(val, k);
+        } catch (_) {}
+      }
+    };
+
+    /* ---------- SfM: jsfeat (FAST) + ml-matrix (SVD 8-point) ---------- */
+    const SfmLib = {
+      jsfeat: null,
+      ml: null,
+      async load(onStatus) {
+        if (!this.jsfeat) {
+          if (onStatus) onStatus("Loading jsfeat (FAST corners)…", 18);
+          await loadFirst([
+            "https://cdn.jsdelivr.net/npm/jsfeat@0.0.8/build/jsfeat-min.js",
+            "https://unpkg.com/jsfeat@0.0.8/build/jsfeat-min.js"
+          ]);
+          this.jsfeat = window.jsfeat;
+          if (!this.jsfeat) throw new Error("jsfeat failed to load");
+        }
+        if (!this.ml) {
+          if (onStatus) onStatus("Loading ml-matrix (SVD)…", 24);
+          try {
+            this.ml = await import("https://cdn.jsdelivr.net/npm/ml-matrix@6.12.1/+esm");
+          } catch (_) {
+            this.ml = await import("https://unpkg.com/ml-matrix@6.12.1/+esm");
+          }
+        }
+        return this;
+      },
+
+      loadImage(url) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = url;
+        });
+      },
+
+      toGray(img, maxW) {
+        const scale = Math.min(1, (maxW || 480) / img.width);
+        const w = Math.max(32, Math.round(img.width * scale));
+        const h = Math.max(32, Math.round(img.height * scale));
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        const ctx = c.getContext("2d", { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const pix = ctx.getImageData(0, 0, w, h);
+        const jf = this.jsfeat;
+        const gray = new jf.matrix_t(w, h, jf.U8_t | jf.C1_t);
+        jf.imgproc.grayscale(pix.data, w, h, gray);
+        return { canvas: c, ctx: ctx, pix: pix, gray: gray, w: w, h: h, scale: scale };
+      },
+
+      detect(frame) {
+        const jf = this.jsfeat;
+        jf.fast_corners.set_threshold(18);
+        const corners = [];
+        const nmax = frame.w * frame.h;
+        for (let i = 0; i < nmax; i++) corners[i] = new jf.keypoint_t(0, 0, 0, 0);
+        const count = jf.fast_corners.detect(frame.gray, corners, 3);
+        const pts = [];
+        for (let i = 0; i < count; i++) pts.push(corners[i]);
+        pts.sort((a, b) => (b.score || 0) - (a.score || 0));
+        return pts.slice(0, 900);
+      },
+
+      descriptor(frame, pt) {
+        const x = Math.round(pt.x), y = Math.round(pt.y);
+        const r = 5;
+        if (x < r || y < r || x >= frame.w - r || y >= frame.h - r) return null;
+        const d = frame.pix.data;
+        const desc = new Float32Array((r * 2 + 1) * (r * 2 + 1));
+        let i = 0, sum = 0;
+        for (let yy = y - r; yy <= y + r; yy++) {
+          for (let xx = x - r; xx <= x + r; xx++) {
+            const v = d[(yy * frame.w + xx) * 4];
+            desc[i++] = v;
+            sum += v;
+          }
+        }
+        const mean = sum / desc.length;
+        let varsum = 0;
+        for (i = 0; i < desc.length; i++) {
+          desc[i] -= mean;
+          varsum += desc[i] * desc[i];
+        }
+        const nrm = Math.sqrt(varsum) || 1;
+        for (i = 0; i < desc.length; i++) desc[i] /= nrm;
+        return desc;
+      },
+
+      match(descA, descB) {
+        const pairs = [];
+        for (let i = 0; i < descA.length; i++) {
+          if (!descA[i]) continue;
+          let best = 1e15, second = 1e15, bi = -1;
+          for (let j = 0; j < descB.length; j++) {
+            if (!descB[j]) continue;
+            let s = 0;
+            const A = descA[i], B = descB[j];
+            for (let k = 0; k < A.length; k++) {
+              const df = A[k] - B[k];
+              s += df * df;
+            }
+            if (s < best) { second = best; best = s; bi = j; }
+            else if (s < second) second = s;
+          }
+          if (bi >= 0 && best < 0.55 && best < 0.82 * second) {
+            pairs.push({ i: i, j: bi, d: best });
+          }
+        }
+        pairs.sort((a, b) => a.d - b.d);
+        const used = new Uint8Array(descB.length);
+        const uniq = [];
+        for (let p = 0; p < pairs.length; p++) {
+          if (used[pairs[p].j]) continue;
+          used[pairs[p].j] = 1;
+          uniq.push(pairs[p]);
+        }
+        return uniq;
+      },
+
+      eightPoint(pts1, pts2, K) {
+        const { Matrix, SingularValueDecomposition } = this.ml;
+        const n = pts1.length;
+        const fx = K[0], fy = K[1], cx = K[2], cy = K[3];
+        const x1 = [], y1 = [], x2 = [], y2 = [];
+        for (let i = 0; i < n; i++) {
+          x1.push((pts1[i].x - cx) / fx);
+          y1.push((pts1[i].y - cy) / fy);
+          x2.push((pts2[i].x - cx) / fx);
+          y2.push((pts2[i].y - cy) / fy);
+        }
+        const A = [];
+        for (let i = 0; i < n; i++) {
+          const X1 = x1[i], Y1 = y1[i], X2 = x2[i], Y2 = y2[i];
+          A.push([X2 * X1, X2 * Y1, X2, Y2 * X1, Y2 * Y1, Y2, X1, Y1, 1]);
+        }
+        const svd = new SingularValueDecomposition(new Matrix(A), { autoTranspose: true });
+        const e = svd.rightSingularVectors.getColumn(8);
+        let E = new Matrix([
+          [e[0], e[1], e[2]],
+          [e[3], e[4], e[5]],
+          [e[6], e[7], e[8]]
+        ]);
+        const es = new SingularValueDecomposition(E, { autoTranspose: true });
+        const U = es.leftSingularVectors;
+        const V = es.rightSingularVectors;
+        const S = Matrix.diag([1, 1, 0]);
+        E = U.mmul(S).mmul(V.transpose());
+        return { E: E, U: U, V: V, x1: x1, y1: y1, x2: x2, y2: y2 };
+      },
+
+      decompose(U, V) {
+        const { Matrix } = this.ml;
+        const W = new Matrix([[0, -1, 0], [1, 0, 0], [0, 0, 1]]);
+        function fixR(R) {
+          if (R.det() < 0) {
+            const F = R.to2DArray();
+            for (let r = 0; r < 3; r++) { F[r][0] *= -1; F[r][1] *= -1; F[r][2] *= -1; }
+            return new Matrix(F);
+          }
+          return R;
+        }
+        const R1 = fixR(U.mmul(W).mmul(V.transpose()));
+        const R2 = fixR(U.mmul(W.transpose()).mmul(V.transpose()));
+        const t = [U.get(0, 2), U.get(1, 2), U.get(2, 2)];
+        const n = Math.hypot(t[0], t[1], t[2]) || 1;
+        t[0] /= n; t[1] /= n; t[2] /= n;
+        return [
+          { R: R1, t: t },
+          { R: R1, t: [-t[0], -t[1], -t[2]] },
+          { R: R2, t: t.slice() },
+          { R: R2, t: [-t[0], -t[1], -t[2]] }
+        ];
+      },
+
+      triangulate(R, t, x1, y1, x2, y2) {
+        const { Matrix, SingularValueDecomposition } = this.ml;
+        const r = R.to2DArray();
+        const P0 = [
+          [1, 0, 0, 0],
+          [0, 1, 0, 0],
+          [0, 0, 1, 0]
+        ];
+        const P1 = [
+          [r[0][0], r[0][1], r[0][2], t[0]],
+          [r[1][0], r[1][1], r[1][2], t[1]],
+          [r[2][0], r[2][1], r[2][2], t[2]]
+        ];
+        const A = new Matrix([
+          [x1 * P0[2][0] - P0[0][0], x1 * P0[2][1] - P0[0][1], x1 * P0[2][2] - P0[0][2], x1 * P0[2][3] - P0[0][3]],
+          [y1 * P0[2][0] - P0[1][0], y1 * P0[2][1] - P0[1][1], y1 * P0[2][2] - P0[1][2], y1 * P0[2][3] - P0[1][3]],
+          [x2 * P1[2][0] - P1[0][0], x2 * P1[2][1] - P1[0][1], x2 * P1[2][2] - P1[0][2], x2 * P1[2][3] - P1[0][3]],
+          [y2 * P1[2][0] - P1[1][0], y2 * P1[2][1] - P1[1][1], y2 * P1[2][2] - P1[1][2], y2 * P1[2][3] - P1[1][3]]
+        ]);
+        const svd = new SingularValueDecomposition(A, { autoTranspose: true });
+        const X = svd.rightSingularVectors.getColumn(3);
+        if (Math.abs(X[3]) < 1e-12) return null;
+        return [X[0] / X[3], X[1] / X[3], X[2] / X[3]];
+      },
+
+      depth(R, t, X) {
+        const r = R.to2DArray();
+        return r[2][0] * X[0] + r[2][1] * X[1] + r[2][2] * X[2] + t[2];
+      },
+
+      ransac(pts1, pts2, K) {
+        if (pts1.length < 16) return null;
+        const n = pts1.length;
+        let best = { inliers: [], hyp: null, ep: null };
+        const iters = Math.min(220, 40 + n);
+        for (let it = 0; it < iters; it++) {
+          const idx = [];
+          while (idx.length < 8) {
+            const k = Math.floor(Math.random() * n);
+            if (idx.indexOf(k) < 0) idx.push(k);
+          }
+          let ep;
+          try {
+            ep = this.eightPoint(idx.map((i) => pts1[i]), idx.map((i) => pts2[i]), K);
+          } catch (_) { continue; }
+          const E = ep.E.to2DArray();
+          const fx = K[0], fy = K[1], cx = K[2], cy = K[3];
+          const inl = [];
+          for (let i = 0; i < n; i++) {
+            const a = [(pts1[i].x - cx) / fx, (pts1[i].y - cy) / fy, 1];
+            const b = [(pts2[i].x - cx) / fx, (pts2[i].y - cy) / fy, 1];
+            const Ea = [
+              E[0][0] * a[0] + E[0][1] * a[1] + E[0][2],
+              E[1][0] * a[0] + E[1][1] * a[1] + E[1][2],
+              E[2][0] * a[0] + E[2][1] * a[1] + E[2][2]
+            ];
+            const num = Math.abs(b[0] * Ea[0] + b[1] * Ea[1] + b[2] * Ea[2]);
+            const den = Math.hypot(Ea[0], Ea[1]) + 1e-9;
+            if (num / den < 0.008) inl.push(i);
+          }
+          if (inl.length > best.inliers.length) best = { inliers: inl, hyp: ep, ep: ep };
+        }
+        if (best.inliers.length < 16) return null;
+        const p1 = best.inliers.map((i) => pts1[i]);
+        const p2 = best.inliers.map((i) => pts2[i]);
+        const refined = this.eightPoint(p1, p2, K);
+        const hyps = this.decompose(refined.U, refined.V);
+        let winner = null, winCount = -1, winPts = [];
+        for (let h = 0; h < hyps.length; h++) {
+          const R = hyps[h].R, t = hyps[h].t;
+          let ok = 0;
+          const cloud = [];
+          for (let i = 0; i < refined.x1.length; i++) {
+            const X = this.triangulate(R, t, refined.x1[i], refined.y1[i], refined.x2[i], refined.y2[i]);
+            if (!X) continue;
+            const z0 = X[2];
+            const z1 = this.depth(R, t, X);
+            if (z0 > 0.05 && z1 > 0.05 && z0 < 80 && z1 < 80) {
+              ok++;
+              cloud.push(X);
+            }
+          }
+          if (ok > winCount) { winCount = ok; winner = hyps[h]; winPts = cloud; }
+        }
+        if (!winner || winCount < 12) return null;
+        return { R: winner.R, t: winner.t, points: winPts, inliers: best.inliers.length };
+      },
+
+      sampleColor(frame, pt) {
+        const x = Math.max(0, Math.min(frame.w - 1, Math.round(pt.x)));
+        const y = Math.max(0, Math.min(frame.h - 1, Math.round(pt.y)));
+        const i = (y * frame.w + x) * 4;
+        const d = frame.pix.data;
+        return [d[i] / 255, d[i + 1] / 255, d[i + 2] / 255];
+      },
+
+      async reconstruct(photos, loc, onStatus) {
+        const usable = (photos || []).filter((p) => p && p.url && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+        usable.sort((a, b) => haversine(loc, a) - haversine(loc, b));
+        const picked = usable.slice(0, 8);
+        if (picked.length < 2) return null;
+
+        const frames = [];
+        for (let i = 0; i < picked.length; i++) {
+          if (onStatus) onStatus("SfM: loading image " + (i + 1) + "/" + picked.length, 28 + i * 3);
+          const img = await this.loadImage(picked[i].url);
+          if (!img) continue;
+          const frame = this.toGray(img, 480);
+          frame.photo = picked[i];
+          frame.kps = this.detect(frame);
+          frame.desc = frame.kps.map((pt) => this.descriptor(frame, pt));
+          frames.push(frame);
+        }
+        if (frames.length < 2) return null;
+
+        const K = [frames[0].w * 0.9, frames[0].w * 0.9, frames[0].w * 0.5, frames[0].h * 0.5];
+        const allPts = [];
+        const cameras = [];
+
+        const p0 = llToLocal(frames[0].photo.lat, frames[0].photo.lng, loc);
+        cameras.push({
+          x: p0.x, y: 1.7, z: p0.z,
+          photo: frames[0].photo,
+          w: frames[0].w, h: frames[0].h
+        });
+
+        let lastR = null;
+        for (let i = 0; i < frames.length - 1; i++) {
+          if (onStatus) onStatus("SfM: matching " + (i + 1) + " → " + (i + 2), 50 + i * 6);
+          const m = this.match(frames[i].desc, frames[i + 1].desc);
+          if (m.length < 18) continue;
+          const pts1 = m.map((pr) => frames[i].kps[pr.i]);
+          const pts2 = m.map((pr) => frames[i + 1].kps[pr.j]);
+          const sol = this.ransac(pts1, pts2, K);
+          if (!sol) continue;
+
+          const gpsA = frames[i].photo;
+          const gpsB = frames[i + 1].photo;
+          const metres = Math.max(2, haversine(gpsA, gpsB));
+          const scale = metres;
+          const R = sol.R;
+          const t = sol.t;
+          lastR = R;
+
+          const locA = llToLocal(gpsA.lat, gpsA.lng, loc);
+          const locB = llToLocal(gpsB.lat, gpsB.lng, loc);
+          cameras.push({
+            x: locB.x, y: 1.7, z: locB.z,
+            photo: gpsB,
+            w: frames[i + 1].w, h: frames[i + 1].h
+          });
+
+          for (let k = 0; k < sol.points.length; k++) {
+            const X = sol.points[k];
+            const xs = X[0] * scale;
+            const ys = X[1] * scale;
+            const zs = X[2] * scale;
+            if (!Number.isFinite(xs) || !Number.isFinite(ys) || !Number.isFinite(zs)) continue;
+            if (Math.hypot(xs, ys, zs) > 220) continue;
+            const col = this.sampleColor(frames[i], pts1[Math.min(k, pts1.length - 1)]);
+            allPts.push({
+              x: locA.x + xs,
+              y: 1.7 - ys,
+              z: locA.z - zs,
+              r: col[0], g: col[1], b: col[2]
+            });
+          }
+        }
+
+        if (allPts.length < 20) return null;
+        return {
+          points: allPts.slice(0, 4000),
+          cameras: cameras,
+          library: "jsfeat FAST + ml-matrix 8-point SVD"
+        };
+      }
+    };
+
+    const PhotoRecon = {
+      pipe: null,
+      libs: null,
+      async load(onStatus) {
+        if (this.pipe) return this.pipe;
+        if (onStatus) onStatus("Loading Depth Anything V2 (first time ~80MB, then cached)…", 16);
+        const urls = [
+          "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/+esm",
+          "https://unpkg.com/@huggingface/transformers@3.5.1/+esm"
+        ];
+        let last = null;
+        for (const url of urls) {
+          try { this.libs = await import(url); last = null; break; }
+          catch (err) { last = err; }
+        }
+        if (!this.libs) throw last || new Error("transformers.js failed");
+        const { pipeline, env } = this.libs;
+        try { env.allowLocalModels = false; env.useBrowserCache = true; } catch (_) {}
+        const models = [
+          "onnx-community/depth-anything-v2-small",
+          "Xenova/depth-anything-small-hf",
+          "Xenova/dpt-hybrid-midas"
+        ];
+        let device = "wasm";
+        try { if (navigator.gpu) device = "webgpu"; } catch (_) {}
+        let err = null;
+        for (const model of models) {
+          try {
+            this.pipe = await pipeline("depth-estimation", model, {
+              device: device,
+              dtype: device === "webgpu" ? "fp32" : "q8",
+              progress_callback: function (info) {
+                if (!onStatus || !info) return;
+                if (info.status === "progress" && info.progress != null) {
+                  onStatus("Depth model " + (info.file || model).split("/").pop() + " " + Math.round(info.progress) + "%", 18);
+                } else if (info.status === "ready") {
+                  onStatus("Depth model ready", 28);
+                }
+              }
+            });
+            this.modelId = model;
+            return this.pipe;
+          } catch (e) {
+            err = e;
+            console.warn("depth model failed", model, e);
+          }
+        }
+        throw err || new Error("No depth model loaded");
+      },
+
+      loadImage(url) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = url;
+        });
+      },
+
+      drawFit(img, maxSide) {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.max(32, Math.round(img.width * scale));
+        const h = Math.max(32, Math.round(img.height * scale));
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        return c;
+      },
+
+      async estimateDepth(canvas) {
+        const { RawImage } = this.libs;
+        let input = canvas;
+        try {
+          if (RawImage && RawImage.fromCanvas) input = RawImage.fromCanvas(canvas);
+        } catch (_) {}
+        const out = await this.pipe(input);
+        let arr = null, w = 0, h = 0;
+        if (out && out.predicted_depth && out.predicted_depth.data) {
+          const dims = out.predicted_depth.dims || [];
+          if (dims.length >= 2) {
+            h = dims[dims.length - 2];
+            w = dims[dims.length - 1];
+          }
+          arr = Array.from(out.predicted_depth.data);
+        }
+        if ((!arr || !w) && out && out.depth) {
+          let dc = out.depth;
+          if (dc.toCanvas) dc = dc.toCanvas();
+          if (dc.getContext) {
+            w = dc.width; h = dc.height;
+            const pix = dc.getContext("2d").getImageData(0, 0, w, h).data;
+            arr = new Array(w * h);
+            for (let i = 0; i < arr.length; i++) arr[i] = pix[i * 4];
+          }
+        }
+        if (!arr || !w || !h) return null;
+        return { arr: arr, w: w, h: h };
+      },
+
+      toMetric(arr, w, h) {
+        let top = 0, bot = 0, nt = 0, nb = 0;
+        for (let x = 0; x < w; x++) {
+          top += arr[x]; nt++;
+          bot += arr[(h - 1) * w + x]; nb++;
+        }
+        top /= nt || 1; bot /= nb || 1;
+        const higherIsCloser = bot > top;
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < arr.length; i++) {
+          const v = arr[i];
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        const span = (max - min) || 1;
+        const z = new Float32Array(arr.length);
+        for (let i = 0; i < arr.length; i++) {
+          let t = (arr[i] - min) / span;
+          if (higherIsCloser) t = 1 - t;
+          z[i] = 1.6 + t * 28;
+        }
+        return z;
+      },
+
+      sampleGrid(src, sw, sh, gw, gh) {
+        const out = new Float32Array(gw * gh);
+        for (let y = 0; y < gh; y++) {
+          for (let x = 0; x < gw; x++) {
+            const sx = Math.min(sw - 1, Math.round(x * (sw - 1) / (gw - 1)));
+            const sy = Math.min(sh - 1, Math.round(y * (sh - 1) / (gh - 1)));
+            out[y * gw + x] = src[sy * sw + sx];
+          }
+        }
+        return out;
+      },
+
+      meshFromDepth(colorCanvas, z, zw, zh) {
+        const gw = 128, gh = 96;
+        const grid = this.sampleGrid(z, zw, zh, gw, gh);
+        const fx = colorCanvas.width * 0.92;
+        const fy = fx;
+        const cx = colorCanvas.width * 0.5;
+        const cy = colorCanvas.height * 0.5;
+        const positions = [];
+        const uvs = [];
+        const indices = [];
+        for (let y = 0; y < gh; y++) {
+          for (let x = 0; x < gw; x++) {
+            const u = x / (gw - 1);
+            const v = y / (gh - 1);
+            const depth = grid[y * gw + x];
+            const px = (u * colorCanvas.width - cx) * depth / fx;
+            const py = (v * colorCanvas.height - cy) * depth / fy;
+            positions.push(px, -py, -depth);
+            uvs.push(u, 1 - v);
+          }
+        }
+        for (let y = 0; y < gh - 1; y++) {
+          for (let x = 0; x < gw - 1; x++) {
+            const z00 = grid[y * gw + x];
+            const z10 = grid[y * gw + x + 1];
+            const z01 = grid[(y + 1) * gw + x];
+            const z11 = grid[(y + 1) * gw + x + 1];
+            const mn = Math.min(z00, z10, z01, z11);
+            const mx = Math.max(z00, z10, z01, z11);
+            if (mn < 0.8 || mx > 46 || mx > mn * 1.32) continue;
+            const i = y * gw + x;
+            indices.push(i, i + 1, i + gw);
+            indices.push(i + 1, i + gw + 1, i + gw);
+          }
+        }
+        if (indices.length < 60) return null;
+        return {
+          positions: positions,
+          uvs: uvs,
+          indices: indices,
+          dataUrl: colorCanvas.toDataURL("image/jpeg", 0.72)
+        };
+      },
+
+      async reconstruct(photos, loc, onStatus) {
+        const candidates = (photos || []).filter((p) => p && p.url && !/wikimedia|commons\.wikimedia/i.test(p.url));
+        const loaded = [];
+        for (let i = 0; i < candidates.length && loaded.length < 5; i++) {
+          if (onStatus) onStatus("Loading photo " + (loaded.length + 1) + " for 3D…", 12);
+          const img = await this.loadImage(candidates[i].url);
+          if (img) loaded.push({ photo: candidates[i], img: img });
+        }
+        if (!loaded.length) return null;
+        await this.load(onStatus);
+        const meshes = [];
+        for (let i = 0; i < loaded.length; i++) {
+          if (onStatus) onStatus("Building 3D surface from photo " + (i + 1) + "/" + loaded.length, 32 + i * 10);
+          try {
+            const color = this.drawFit(loaded[i].img, 640);
+            const depth = await this.estimateDepth(this.drawFit(loaded[i].img, 384));
+            if (!depth) continue;
+            const metric = this.toMetric(depth.arr, depth.w, depth.h);
+            const mesh = this.meshFromDepth(color, metric, depth.w, depth.h);
+            if (!mesh) continue;
+            const ph = loaded[i].photo;
+            const p = llToLocal(ph.lat || loc.lat, ph.lng || loc.lng, loc);
+            mesh.x = p.x;
+            mesh.y = 1.62;
+            mesh.z = p.z;
+            mesh.heading = Number(ph.heading) || 0;
+            mesh.source = ph.source || "photo";
+            meshes.push(mesh);
+          } catch (err) {
+            console.warn("photo mesh failed", err);
+          }
+        }
+        return meshes.length ? { meshes: meshes, model: this.modelId } : null;
+      }
+    };
+
+    const ReconstructionProvider = {
+      async reconstruct(loc, photos, buildings, onStatus) {
+        onStatus("Reconstructing place from photos…", 10);
+        let photoModel = null;
+        try {
+          photoModel = await PhotoRecon.reconstruct(photos, loc, onStatus);
+        } catch (err) {
+          console.warn("PhotoRecon failed", err);
+          photoModel = null;
+        }
+
+        let sfm = null;
+        if (!photoModel || photoModel.meshes.length < 2) {
+          try {
+            await SfmLib.load(onStatus);
+            onStatus("SfM fallback (jsfeat + 8-point)…", 70);
+            sfm = await SfmLib.reconstruct(photos, loc, onStatus);
+          } catch (err) {
+            console.warn("SfM failed", err);
+          }
+        }
+
+        const bits = [];
+        if (photoModel) bits.push("photo meshes ×" + photoModel.meshes.length + " (" + (photoModel.model || "depth") + ")");
+        if (sfm) bits.push("SfM " + sfm.points.length + " pts");
+        if (buildings.length) bits.push("OSM footprints");
+        if (!bits.length) bits.push("generated city (need CORS street photos)");
+
+        const payload = {
+          loc: loc,
+          photos: [],
+          buildings: buildings.slice(0, 80),
+          sfm: sfm,
+          photoModel: photoModel,
+          created: Date.now(),
+          method: bits.join(" + ")
+        };
+        onStatus("Loading 3D world…", 96);
+        return payload;
+      }
+    };
+
+    function showProgress(text, pct) {
+      const box = document.getElementById("progress");
+      box.classList.add("is-on");
+      document.getElementById("progress-copy").textContent = text;
+      document.getElementById("progress-bar").style.width = (pct || 8) + "%";
+    }
+    function hideProgress() { document.getElementById("progress").classList.remove("is-on"); }
+
+    function waitMapLibre(map, ev, ms) {
+      return new Promise((resolve) => {
+        const done = () => resolve();
+        map.once(ev, done);
+        setTimeout(done, ms || 8000);
+      });
+    }
+
+    /* ---------- Google Earth ---------- */
+    function installMapsBootstrap(key) {
+      const g = { key: key, v: "weekly" };
+      (function (g) {
+        var h, a, k, p = "The Google Maps JavaScript API", c = "google", l = "importLibrary", q = "__ib__", m = document, b = window;
+        b = b[c] || (b[c] = {});
+        var d = b.maps || (b.maps = {}), r = new Set(), e = new URLSearchParams();
+        var u = function () {
+          return h || (h = new Promise(function (f, n) {
+            a = m.createElement("script");
+            e.set("libraries", Array.from(r).join(","));
+            for (k in g) e.set(k.replace(/[A-Z]/g, function (t) { return "_" + t[0].toLowerCase(); }), g[k]);
+            e.set("callback", c + ".maps." + q);
+            a.src = "https://maps." + c + "apis.com/maps/api/js?" + e;
+            d[q] = f;
+            a.onerror = function () { n(new Error(p + " could not load")); };
+            m.head.appendChild(a);
+          }));
+        };
+        if (typeof d[l] !== "function") {
+          d[l] = function (f) {
+            r.add(f);
+            var rest = Array.prototype.slice.call(arguments, 1);
+            return u().then(function () { return d[l].apply(d, [f].concat(rest)); });
+          };
+        }
+      })(g);
+    }
+
+    function loadClassicGoogleMap(key) {
+      return new Promise(function (resolve, reject) {
+        if (window.google && google.maps && google.maps.Map) { resolve(); return; }
+        var done = false;
+        window.__gmapsCb = function () { if (!done) { done = true; resolve(); } };
+        window.gm_authFailure = function () {
+          if (!done) { done = true; reject(new Error("Google API key rejected. Enable billing + Maps JavaScript API, and allow this site as an HTTP referrer.")); }
+        };
+        var s = document.createElement("script");
+        s.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(key) + "&v=weekly&callback=__gmapsCb";
+        s.async = true;
+        s.onerror = function () { if (!done) { done = true; reject(new Error("Google Maps script blocked")); } };
+        document.head.appendChild(s);
+        setTimeout(function () { if (!done) { done = true; reject(new Error("Google Maps timed out")); } }, 16000);
+      });
+    }
+
+    async function loadGoogleMaps(key) {
+      window.gm_authFailure = function () {
+        console.warn("gm_authFailure: key rejected or billing/referrer issue");
+      };
+      installMapsBootstrap(key);
+      if (typeof google.maps.importLibrary === "function") {
+        try {
+          await google.maps.importLibrary("maps");
+          return;
+        } catch (err) {
+          console.warn("importLibrary(maps) failed", err);
+        }
+      }
+      await loadClassicGoogleMap(key);
+    }
+
+    function destroyGoogle() {
+      if (state.g3d && state.g3d.remove) {
+        try { state.g3d.remove(); } catch (_) {}
+      }
+      state.g3d = null;
+      state.g2d = null;
+      document.getElementById("earth-root").replaceChildren();
+    }
+
+    function makeGoogle2d(root) {
+      const MapCtor = google.maps.Map;
+      const map = new MapCtor(root, {
+        center: { lat: 20.5, lng: 78.9 },
+        zoom: 3,
+        mapTypeId: "hybrid",
+        disableDefaultUI: true,
+        tilt: 0,
+        heading: 0
+      });
+      state.g2d = map;
+      setEngine("google2d");
+      state.mapReady = true;
+      hideBoot();
+      return "google2d";
+    }
+
+    async function createGoogleEarth(key) {
+      showBoot("Starting Google Earth…");
+      await loadGoogleMaps(key);
+      const root = document.getElementById("earth-root");
+      root.replaceChildren();
+
+      if (typeof google.maps.importLibrary === "function") {
+        try {
+          const lib = await google.maps.importLibrary("maps3d");
+          const Map3DElement = lib.Map3DElement;
+          const MapMode = lib.MapMode;
+          const el = new Map3DElement({
+            center: { lat: 20.5, lng: 78.9, altitude: 0 },
+            range: 16000000,
+            tilt: 0,
+            heading: 0,
+            mode: (MapMode && MapMode.HYBRID) || "HYBRID",
+            defaultUIHidden: true
+          });
+          el.style.width = "100%";
+          el.style.height = "100%";
+          root.appendChild(el);
+          state.g3d = el;
+          setEngine("google3d");
+          state.mapReady = true;
+          hideBoot();
+          return "google3d";
+        } catch (err) {
+          console.warn("Google 3D Earth unavailable", err);
+        }
+        try {
+          const mapsLib = await google.maps.importLibrary("maps");
+          const MapCtor = mapsLib.Map || google.maps.Map;
+          const map = new MapCtor(root, {
+            center: { lat: 20.5, lng: 78.9 },
+            zoom: 3,
+            mapTypeId: "hybrid",
+            disableDefaultUI: true,
+            tilt: 0,
+            heading: 0
+          });
+          state.g2d = map;
+          setEngine("google2d");
+          state.mapReady = true;
+          hideBoot();
+          toast("PHOTOREAL 3D OFF", "Key works as Google hybrid. Enable billing + 3D Maps for photoreal Earth.");
+          return "google2d";
+        } catch (err) {
+          console.warn("importLibrary maps failed", err);
+        }
+      }
+
+      if (google.maps && google.maps.Map) {
+        toast("PHOTOREAL 3D OFF", "Using Google hybrid. Enable billing + 3D Maps on this key for photoreal Earth.");
+        return makeGoogle2d(root);
+      }
+      throw new Error("Google Maps did not initialize. Enable billing and Maps JavaScript API, allow this domain as a referrer.");
+    }
+
+    function g3dFly(el, loc, range, tilt, heading, ms) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          el.removeEventListener("gmp-animationend", done);
+          resolve();
+        };
+        el.addEventListener("gmp-animationend", done);
+        setTimeout(done, ms + 900);
+        el.flyCameraTo({
+          endCamera: {
+            center: { lat: loc.lat, lng: loc.lng, altitude: 0 },
+            range,
+            tilt,
+            heading
+          },
+          durationMillis: ms
+        });
+      });
+    }
+
+    /* ---------- MapLibre Earth ---------- */
+    async function ensureMapLibre() {
+      if (window.maplibregl) return;
+      showBoot("Loading map engine…");
+      await loadFirst(ML_JS);
+      if (!window.maplibregl) throw new Error("MapLibre failed to load");
+    }
+
+    async function createMapLibre(preferred) {
+      await ensureMapLibre();
+      showBoot("Loading open Earth tiles…");
+      if (state.map) {
+        try { state.map.remove(); } catch (_) {}
+        state.map = null;
+      }
+      const chain = preferred === "streets"
+        ? [OFM_LIBERTY, osmRasterStyle(), OFM_DARK, satelliteStyle()]
+        : [satelliteStyle(), osmRasterStyle(), OFM_LIBERTY, OFM_DARK, "https://demotiles.maplibre.org/style.json"];
+
+      let lastErr = null;
+      for (const style of chain) {
+        try {
+          const map = new maplibregl.Map({
+            container: "map-root",
+            style,
+            center: [78.9, 20.5],
+            zoom: 2.15,
+            pitch: 0,
+            maxPitch: 76,
+            canvasContextAttributes: { antialias: true },
+            failIfMajorPerformanceCaveat: false,
+            attributionControl: {
+              compact: true,
+              customAttribution: "© OpenStreetMap contributors"
+            }
+          });
+          const loaded = await new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error("style timeout")), 12000);
+            map.once("load", () => { clearTimeout(t); resolve(true); });
+            map.once("error", (e) => {
+              const msg = (e && e.error && (e.error.message || e.error.statusText)) || "";
+              if (/style|fetch|404|403/i.test(String(msg))) {
+                clearTimeout(t);
+                reject(e.error || new Error("style error"));
+              }
+            });
+          });
+          if (!loaded) continue;
+          state.map = map;
+          try { map.setProjection({ type: "globe" }); } catch (_) {}
+          map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+          map.on("error", (e) => console.warn("map error", e && e.error));
+          setEngine("maplibre");
+          state.basemap = (typeof style === "object" && style.name === "WORLDS Satellite") ? "sat" : "streets";
+          document.getElementById("style-btn").textContent = state.basemap === "sat" ? "SAT" : "OSM";
+          state.mapReady = true;
+          hideBoot();
+          requestAnimationFrame(() => { try { map.resize(); } catch (_) {} });
+          return map;
+        } catch (err) {
+          lastErr = err;
+          console.warn("style failed, trying next", err);
+          try { if (state.map) state.map.remove(); } catch (_) {}
+          state.map = null;
+        }
+      }
+      hideBoot();
+      throw lastErr || new Error("No basemap could load");
+    }
+
+    async function applyBasemap(kind) {
+      if (state.engine !== "maplibre" || !state.map) return;
+      showBoot(kind === "sat" ? "Switching to satellite…" : "Switching to streets…");
+      const style = kind === "sat" ? satelliteStyle() : OFM_LIBERTY;
+      try {
+        state.map.setStyle(style);
+        await waitMapLibre(state.map, "load", 10000);
+        try { state.map.setProjection({ type: "globe" }); } catch (_) {}
+        state.basemap = kind === "sat" ? "sat" : "streets";
+        document.getElementById("style-btn").textContent = state.basemap === "sat" ? "SAT" : "OSM";
+        if (kind === "streets") {
+          try { state.map.setStyle(style); } catch (_) {}
+        }
+      } catch (_) {
+        try {
+          state.map.setStyle(kind === "sat" ? satelliteStyle() : osmRasterStyle());
+          await waitMapLibre(state.map, "load", 8000);
+          state.basemap = kind === "sat" ? "sat" : "streets";
+          document.getElementById("style-btn").textContent = state.basemap === "sat" ? "SAT" : "OSM";
+        } catch (err) {
+          toast("BASEMAP FAILED", "Could not switch map style.");
+        }
+      }
+      hideBoot();
+    }
+
+    function engineLabel() {
+      if (state.engine === "google3d") return "Google Earth (photoreal 3D)";
+      if (state.engine === "google2d") return "Google hybrid map";
+      if (state.basemap === "sat") return "Open satellite Earth (no key)";
+      return TerrainProvider.attached ? "OSM + terrain" : "OSM streets";
+    }
+
+    async function flyToLocation(loc) {
+      const id = ++state.flyId;
+      destCard.classList.remove("is-on");
+      hideSuggest();
+      setMode("flying");
+      document.getElementById("flight-title").textContent = loc.name.toUpperCase();
+
+      if (state.engine === "google3d" && state.g3d) {
+        const stages = [
+          { range: 12000000, tilt: 0, heading: 0, dur: 1600, label: "EARTH" },
+          { range: 1800000, tilt: 18, heading: 8, dur: 1600, label: "COUNTRY" },
+          { range: 90000, tilt: 42, heading: 16, dur: 1500, label: "REGION" },
+          { range: 7000, tilt: 58, heading: 22, dur: 1600, label: "CITY" },
+          { range: 1200, tilt: 64, heading: 28, dur: 1400, label: "DESTINATION" }
+        ];
+        for (const s of stages) {
+          if (id !== state.flyId) return false;
+          document.getElementById("flight-stage").textContent = s.label;
+          await g3dFly(state.g3d, loc, s.range, s.tilt, s.heading, s.dur);
+        }
+      } else if (state.engine === "google2d" && state.g2d) {
+        const stages = [
+          { zoom: 3, tilt: 0, dur: 1200, label: "EARTH" },
+          { zoom: 6, tilt: 0, dur: 1200, label: "COUNTRY" },
+          { zoom: 10, tilt: 0, dur: 1200, label: "REGION" },
+          { zoom: 14, tilt: 45, dur: 1400, label: "CITY" },
+          { zoom: 17, tilt: 45, dur: 1200, label: "DESTINATION" }
+        ];
+        for (const s of stages) {
+          if (id !== state.flyId) return false;
+          document.getElementById("flight-stage").textContent = s.label;
+          state.g2d.setOptions({ tilt: s.tilt });
+          state.g2d.panTo({ lat: loc.lat, lng: loc.lng });
+          state.g2d.setZoom(s.zoom);
+          await wait(s.dur);
+        }
+      } else if (state.map) {
+        const stages = [
+          { zoom: 3.2, pitch: 0, bearing: 0, dur: 1400, label: "EARTH" },
+          { zoom: 6.4, pitch: 18, bearing: 8, dur: 1500, label: "COUNTRY" },
+          { zoom: 10.2, pitch: 42, bearing: 16, dur: 1500, label: "REGION" },
+          { zoom: 14.6, pitch: 58, bearing: 22, dur: 1700, label: "CITY" },
+          { zoom: 16.3, pitch: 62, bearing: 28, dur: 1500, label: "DESTINATION" }
+        ];
+        for (const s of stages) {
+          if (id !== state.flyId) return false;
+          document.getElementById("flight-stage").textContent = s.label;
+          state.map.flyTo({
+            center: [loc.lng, loc.lat],
+            zoom: s.zoom,
+            pitch: s.pitch,
+            bearing: s.bearing,
+            duration: s.dur,
+            essential: true
+          });
+          await waitMapLibre(state.map, "moveend", 8000);
+        }
+        if (state.basemap === "streets") TerrainProvider.attach(state.map);
+      }
+
+      if (id !== state.flyId) return false;
+      await enterExplore(loc);
+      return true;
+    }
+
+    async function enterExplore(loc) {
+      state.selected = loc;
+      document.getElementById("hud-name").textContent = loc.name.toUpperCase();
+      document.getElementById("hud-sub").textContent = loc.formattedAddress || "";
+      document.getElementById("hud-status").textContent = engineLabel();
+      setMode("explore");
+
+      try {
+        showProgress("Finding imagery…", 12);
+        const photos = await ImageryProvider.searchNearby(loc.lat, loc.lng);
+        state.photos = photos;
+        if (photos.length) {
+          document.getElementById("gallery").classList.add("is-on");
+          document.getElementById("gallery-img").src = photos[0].url;
+          document.getElementById("gallery-cap").textContent = photos[0].attribution || photos[0].source;
+          document.getElementById("hud-status").textContent = engineLabel() + " · street imagery (" + photos.length + ")";
+        } else {
+          document.getElementById("gallery").classList.remove("is-on");
+          toast("STREET IMAGERY UNAVAILABLE", mapillaryToken() ? "No nearby photos from Mapillary / KartaView." : "Add a Mapillary token in KEYS, or try another city.");
+        }
+      } catch (_) {
+        state.photos = [];
+        document.getElementById("gallery").classList.remove("is-on");
+        toast("STREET IMAGERY UNAVAILABLE", "Using geographic reconstruction.");
+      }
+
+      try {
+        state.buildings = await GeoProvider.getBuildings(loc.lat, loc.lng, 170);
+      } catch (_) {
+        state.buildings = [];
+      }
+      hideProgress();
+    }
+
+    /* ---------- Three.js scene ---------- */
+    function llToLocal(lat, lng, origin) {
+      const R = 6378137;
+      const dLat = (lat - origin.lat) * Math.PI / 180;
+      const dLng = (lng - origin.lng) * Math.PI / 180;
+      return {
+        x: dLng * Math.cos(origin.lat * Math.PI / 180) * R,
+        z: -dLat * R
+      };
+    }
+
+    function disposeScene() {
+      if (scene.raf) cancelAnimationFrame(scene.raf);
+      scene.raf = 0;
+      scene.objects.forEach((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (o.material.map) o.material.map.dispose();
+          o.material.dispose();
+        }
+      });
+      scene.objects = [];
+      if (scene.world) {
+        while (scene.world.children.length) scene.world.remove(scene.world.children[0]);
+      }
+    }
+
+    function loadTexture(url) {
+      return new Promise((resolve) => {
+        const loader = new THREE.TextureLoader();
+        loader.crossOrigin = "anonymous";
+        loader.load(url, (t) => { t.colorSpace = THREE.SRGBColorSpace; resolve(t); }, undefined, () => resolve(null));
+      });
+    }
+
+    function hash01(n) {
+      return Math.abs(Math.sin(n * 127.1) * 43758.5453) % 1;
+    }
+
+    function canvasTex(canvas, repeatX, repeatY) {
+      const t = new THREE.CanvasTexture(canvas);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 4;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(repeatX || 1, repeatY || 1);
+      t.needsUpdate = true;
+      return t;
+    }
+
+    function makeFacadeCanvas(seed, floors, bays) {
+      const w = 256, h = 512;
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      const walls = [
+        [118, 108, 96], [96, 92, 88], [86, 94, 98], [132, 118, 100],
+        [78, 80, 82], [140, 128, 112], [92, 84, 80], [108, 116, 120]
+      ];
+      const wall = walls[Math.floor(hash01(seed) * walls.length)];
+      ctx.fillStyle = "rgb(" + wall[0] + "," + wall[1] + "," + wall[2] + ")";
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(255,255,255,0.04)";
+      for (let y = 0; y < h; y += 4) ctx.fillRect(0, y, w, 1);
+      ctx.fillStyle = "rgba(0,0,0,0.22)";
+      ctx.fillRect(0, h * 0.84, w, h * 0.16);
+      ctx.fillStyle = hash01(seed + 3) > 0.45 ? "#1b1e22" : "#c4ae7a";
+      ctx.fillRect(20, h * 0.875, w - 40, h * 0.09);
+      ctx.fillStyle = "rgba(180,200,220,0.18)";
+      ctx.fillRect(28, h * 0.89, w - 56, 10);
+      const rows = floors || 9;
+      const cols = bays || 5;
+      const top = 22, bot = h * 0.82;
+      const cellH = (bot - top) / rows;
+      const cellW = (w - 28) / cols;
+      for (let r = 0; r < rows; r++) {
+        for (let col = 0; col < cols; col++) {
+          const lit = hash01(seed * 1.7 + r * 17 + col * 9) > 0.48;
+          const wx = 16 + col * cellW + 7;
+          const wy = top + r * cellH + 7;
+          const ww = cellW - 14;
+          const wh = cellH - 14;
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          ctx.fillRect(wx - 2, wy - 2, ww + 4, wh + 4);
+          if (lit) {
+            const warm = 190 + hash01(seed + r) * 45;
+            ctx.fillStyle = "rgb(" + warm + "," + (warm * 0.78) + ",78)";
+          } else {
+            ctx.fillStyle = "rgb(28,38,46)";
+          }
+          ctx.fillRect(wx, wy, ww, wh);
+          ctx.fillStyle = "rgba(255,255,255,0.08)";
+          ctx.fillRect(wx, wy, ww * 0.45, wh);
+          ctx.strokeStyle = "rgba(10,12,14,0.55)";
+          ctx.strokeRect(wx + ww * 0.5, wy, 1, wh);
+          ctx.strokeRect(wx, wy + wh * 0.5, ww, 1);
+        }
+      }
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(0, 10, w, 7);
+      ctx.fillStyle = "rgba(0,0,0,0.2)";
+      ctx.fillRect(0, 17, w, 3);
+      const img = ctx.getImageData(0, 0, w, h);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const n = (hash01(i * 0.013 + seed) - 0.5) * 16;
+        d[i] = Math.max(0, Math.min(255, d[i] + n));
+        d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
+        d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
+      }
+      ctx.putImageData(img, 0, 0);
+      return c;
+    }
+
+    function makeGroundCanvas() {
+      const w = 512, h = 512;
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#3a4336";
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < 1800; i++) {
+        ctx.fillStyle = "rgba(" + (40 + Math.random() * 50) + "," + (55 + Math.random() * 40) + "," + (30 + Math.random() * 25) + ",0.35)";
+        ctx.fillRect(Math.random() * w, Math.random() * h, 2 + Math.random() * 6, 2 + Math.random() * 4);
+      }
+      return c;
+    }
+
+    function makeAsphaltCanvas() {
+      const w = 256, h = 512;
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#2a2c2f";
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < 900; i++) {
+        const g = 30 + Math.random() * 30;
+        ctx.fillStyle = "rgba(" + g + "," + g + "," + g + ",0.35)";
+        ctx.fillRect(Math.random() * w, Math.random() * h, 2, 2);
+      }
+      ctx.strokeStyle = "rgba(230,210,80,0.75)";
+      ctx.setLineDash([18, 16]);
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(w * 0.5, 0);
+      ctx.lineTo(w * 0.5, h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = "rgba(230,230,230,0.35)";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(10, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w - 10, 0); ctx.lineTo(w - 10, h); ctx.stroke();
+      return c;
+    }
+
+    function makeSkyCanvas() {
+      const w = 8, h = 256;
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, "#7fb4d8");
+      g.addColorStop(0.45, "#c5d8e6");
+      g.addColorStop(0.72, "#e7d3b0");
+      g.addColorStop(1, "#8a7a68");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      return c;
+    }
+
+    async function buildScene(payload) {
+      disposeScene();
+      const canvas = document.getElementById("scene-root");
+      if (!scene.renderer) {
+        scene.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        scene.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.6));
+        scene.renderer.setSize(innerWidth, innerHeight, false);
+        scene.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        scene.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        scene.renderer.toneMappingExposure = 1.12;
+        scene.renderer.shadowMap.enabled = true;
+        scene.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        scene.three = new THREE.Scene();
+        scene.three.fog = new THREE.Fog(0xc4b49a, 70, 420);
+        scene.camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.2, 1400);
+        scene.world = new THREE.Group();
+        scene.three.add(scene.world);
+        const hemi = new THREE.HemisphereLight(0xd8e6f4, 0x3a3228, 0.72);
+        const sun = new THREE.DirectionalLight(0xffe2b8, 2.35);
+        sun.position.set(70, 110, 36);
+        sun.castShadow = true;
+        sun.shadow.mapSize.set(2048, 2048);
+        sun.shadow.camera.near = 2;
+        sun.shadow.camera.far = 280;
+        sun.shadow.camera.left = -130;
+        sun.shadow.camera.right = 130;
+        sun.shadow.camera.top = 130;
+        sun.shadow.camera.bottom = -130;
+        sun.shadow.bias = -0.00028;
+        sun.shadow.normalBias = 0.035;
+        const fill = new THREE.DirectionalLight(0x88a0b8, 0.28);
+        fill.position.set(-50, 20, -40);
+        scene.three.add(hemi, sun, fill);
+        window.addEventListener("resize", () => {
+          if (!scene.renderer) return;
+          scene.renderer.setSize(innerWidth, innerHeight, false);
+          scene.camera.aspect = innerWidth / innerHeight;
+          scene.camera.updateProjectionMatrix();
+          if (state.map) try { state.map.resize(); } catch (_) {}
+        });
+      }
+
+      const origin = { lat: payload.loc.lat, lng: payload.loc.lng };
+      scene.origin = origin;
+
+      function addMesh(mesh) {
+        scene.world.add(mesh);
+        scene.objects.push(mesh);
+        return mesh;
+      }
+
+      const sky = new THREE.Mesh(
+        new THREE.SphereGeometry(700, 24, 16),
+        new THREE.MeshBasicMaterial({ map: canvasTex(makeSkyCanvas()), side: THREE.BackSide, fog: false })
+      );
+      addMesh(sky);
+
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(460, 80),
+        new THREE.MeshStandardMaterial({
+          map: canvasTex(makeGroundCanvas(), 18, 18),
+          roughness: 0.95,
+          metalness: 0.02
+        })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      addMesh(ground);
+
+      const asphaltMap = canvasTex(makeAsphaltCanvas(), 1, 18);
+      const roadMat = new THREE.MeshStandardMaterial({ map: asphaltMap, roughness: 0.9, metalness: 0.04 });
+      const walkMat = new THREE.MeshStandardMaterial({ color: 0x8b8680, roughness: 0.86, metalness: 0.03 });
+      function roadStrip(len, width, rotY, y) {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, 0.1, len), roadMat);
+        mesh.position.y = y == null ? 0.05 : y;
+        mesh.rotation.y = rotY || 0;
+        mesh.receiveShadow = true;
+        addMesh(mesh);
+      }
+      roadStrip(400, 11, 0);
+      roadStrip(400, 11, Math.PI / 2);
+      const walkA = new THREE.Mesh(new THREE.BoxGeometry(16.5, 0.07, 400), walkMat);
+      walkA.position.y = 0.035;
+      walkA.receiveShadow = true;
+      addMesh(walkA);
+      const walkB = new THREE.Mesh(new THREE.BoxGeometry(400, 0.07, 16.5), walkMat);
+      walkB.position.y = 0.033;
+      walkB.receiveShadow = true;
+      addMesh(walkB);
+
+      const facades = [];
+      for (let i = 0; i < 8; i++) facades.push(canvasTex(makeFacadeCanvas(i + 3.1, 8 + (i % 4), 4 + (i % 3))));
+      const roofs = [
+        new THREE.MeshStandardMaterial({ color: 0x3a3330, roughness: 0.82, metalness: 0.08 }),
+        new THREE.MeshStandardMaterial({ color: 0x4a4036, roughness: 0.78, metalness: 0.06 }),
+        new THREE.MeshStandardMaterial({ color: 0x2f3438, roughness: 0.8, metalness: 0.1 })
+      ];
+
+      function facadeMat(seed, rx, ry) {
+        const t = facades[Math.abs(Math.floor(seed)) % facades.length].clone();
+        t.repeat.set(rx || 1, ry || 1);
+        return new THREE.MeshStandardMaterial({
+          map: t,
+          roughness: 0.68,
+          metalness: 0.05
+        });
+      }
+
+      function boxBuilding(x, z, w, d, h, seed) {
+        const floors = Math.max(3, Math.round(h / 3.15));
+        const side = facadeMat(seed, Math.max(1, Math.round(w / 6)), floors / 8);
+        const front = facadeMat(seed + 2, Math.max(1, Math.round(d / 6)), floors / 8);
+        const roof = roofs[Math.abs(Math.floor(seed)) % roofs.length];
+        const mats = [side, side, roof, walkMat, front, front];
+        const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats);
+        body.position.set(x, h / 2, z);
+        body.castShadow = true;
+        body.receiveShadow = true;
+        addMesh(body);
+        const ledge = new THREE.Mesh(
+          new THREE.BoxGeometry(w + 0.45, 0.28, d + 0.45),
+          new THREE.MeshStandardMaterial({ color: 0x5c5854, roughness: 0.7, metalness: 0.08 })
+        );
+        ledge.position.set(x, h + 0.1, z);
+        ledge.castShadow = true;
+        addMesh(ledge);
+        if (h > 16 && hash01(seed + 8) > 0.45) {
+          const cap = new THREE.Mesh(
+            new THREE.BoxGeometry(w * 0.35, 2.4, d * 0.35),
+            roof
+          );
+          cap.position.set(x, h + 1.4, z);
+          cap.castShadow = true;
+          addMesh(cap);
+        }
+        if (hash01(seed + 11) > 0.55) {
+          const awn = new THREE.Mesh(
+            new THREE.BoxGeometry(Math.min(w, 6.5), 0.12, 1.1),
+            new THREE.MeshStandardMaterial({ color: 0x8b2e2e, roughness: 0.65, metalness: 0.05 })
+          );
+          awn.position.set(x, 3.15, z + d / 2 + 0.4);
+          addMesh(awn);
+        }
+      }
+
+      let built = 0;
+      (payload.buildings || []).forEach((b, idx) => {
+        if (!b.ring || b.ring.length < 3) return;
+        const shape = new THREE.Shape();
+        let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+        b.ring.forEach((pt, i) => {
+          const p = llToLocal(pt.lat, pt.lng, origin);
+          if (i === 0) shape.moveTo(p.x, -p.z);
+          else shape.lineTo(p.x, -p.z);
+          minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+          minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+        });
+        const geo = new THREE.ExtrudeGeometry(shape, { depth: b.height, bevelEnabled: false });
+        geo.rotateX(-Math.PI / 2);
+        const span = Math.max(6, Math.hypot(maxX - minX, maxZ - minZ));
+        const mat = facadeMat(b.id || idx, Math.max(1, span / 10), Math.max(1, b.height / 10));
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        addMesh(mesh);
+        built += 1;
+      });
+
+      if (built < 8 && !(payload.photoModel && payload.photoModel.meshes && payload.photoModel.meshes.length)) {
+        const block = 28;
+        for (let gx = -5; gx <= 5; gx++) {
+          for (let gz = -5; gz <= 5; gz++) {
+            if (Math.abs(gx) === 0 || Math.abs(gz) === 0) continue;
+            const seed = gx * 17.3 + gz * 9.1 + 4.2;
+            if (hash01(seed) < 0.16) continue;
+            const w = 9 + hash01(seed + 1) * 11;
+            const d = 9 + hash01(seed + 2) * 10;
+            const h = 8 + hash01(seed + 3) * 22 + ((Math.abs(gx) + Math.abs(gz)) % 4 === 0 ? 12 : 0);
+            const jitterX = (hash01(seed + 4) - 0.5) * 4;
+            const jitterZ = (hash01(seed + 5) - 0.5) * 4;
+            boxBuilding(gx * block + jitterX, gz * block + jitterZ, w, d, h, seed);
+            built += 1;
+            if (hash01(seed + 6) > 0.72) {
+              boxBuilding(gx * block + jitterX + w * 0.28, gz * block + jitterZ - d * 0.18, w * 0.55, d * 0.55, h * 0.62, seed + 20);
+            }
+          }
+        }
+      }
+
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3424, roughness: 0.92, metalness: 0 });
+      const leafA = new THREE.MeshStandardMaterial({ color: 0x3f6d38, roughness: 0.86, metalness: 0 });
+      const leafB = new THREE.MeshStandardMaterial({ color: 0x2f5530, roughness: 0.88, metalness: 0 });
+      for (let i = -7; i <= 7; i++) {
+        if (i === 0) continue;
+        const t = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 2.4, 7), trunkMat);
+        t.position.set(8.2, 1.2, i * 14);
+        t.castShadow = true;
+        addMesh(t);
+        const leaf = new THREE.Mesh(new THREE.SphereGeometry(1.55, 10, 8), i % 2 ? leafA : leafB);
+        leaf.position.set(8.2, 3.15, i * 14);
+        leaf.castShadow = true;
+        addMesh(leaf);
+        const leaf2 = new THREE.Mesh(new THREE.SphereGeometry(1.15, 8, 6), leafA);
+        leaf2.position.set(8.9, 2.7, i * 14 + 0.4);
+        leaf2.castShadow = true;
+        addMesh(leaf2);
+      }
+
+      const lampMat = new THREE.MeshStandardMaterial({ color: 0x1c1f23, roughness: 0.38, metalness: 0.45 });
+      for (let i = -3; i <= 3; i++) {
+        if (i === 0) continue;
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 5.4, 6), lampMat);
+        pole.position.set(-7.1, 2.7, i * 24);
+        pole.castShadow = true;
+        addMesh(pole);
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.08), lampMat);
+        arm.position.set(-6.4, 5.3, i * 24);
+        addMesh(arm);
+        const bulb = new THREE.Mesh(
+          new THREE.SphereGeometry(0.18, 8, 6),
+          new THREE.MeshStandardMaterial({ color: 0xffe2a8, emissive: 0xffc56a, emissiveIntensity: 1.1, roughness: 0.35 })
+        );
+        bulb.position.set(-5.8, 5.15, i * 24);
+        addMesh(bulb);
+        if (Math.abs(i) <= 2) {
+          const light = new THREE.PointLight(0xffd9a0, 1.15, 22, 2);
+          light.position.set(-5.8, 5.1, i * 24);
+          scene.three.add(light);
+        }
+      }
+
+      if (payload.photoModel && payload.photoModel.meshes) {
+        payload.photoModel.meshes.forEach((pm) => {
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.Float32BufferAttribute(pm.positions, 3));
+          geo.setAttribute("uv", new THREE.Float32BufferAttribute(pm.uvs, 2));
+          geo.setIndex(pm.indices);
+          geo.computeVertexNormals();
+          const tex = new THREE.TextureLoader().load(pm.dataUrl);
+          tex.colorSpace = THREE.SRGBColorSpace;
+          const mat = new THREE.MeshStandardMaterial({
+            map: tex,
+            roughness: 0.82,
+            metalness: 0.02,
+            side: THREE.DoubleSide
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          const heading = (pm.heading || 0) * Math.PI / 180;
+          mesh.position.set(pm.x, pm.y, pm.z);
+          mesh.lookAt(pm.x + Math.sin(heading), pm.y, pm.z - Math.cos(heading));
+          addMesh(mesh);
+        });
+      }
+
+      if (payload.sfm && payload.sfm.points && payload.sfm.points.length) {
+        const n = payload.sfm.points.length;
+        const pos = new Float32Array(n * 3);
+        const col = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          const p = payload.sfm.points[i];
+          pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
+          col[i * 3] = p.r; col[i * 3 + 1] = p.g; col[i * 3 + 2] = p.b;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+        const cloud = new THREE.Points(g, new THREE.PointsMaterial({
+          size: 0.28,
+          vertexColors: true,
+          sizeAttenuation: true
+        }));
+        addMesh(cloud);
+
+        (payload.sfm.cameras || []).forEach((cam) => {
+          const group = new THREE.Group();
+          const body = new THREE.Mesh(
+            new THREE.BoxGeometry(0.45, 0.32, 0.55),
+            new THREE.MeshStandardMaterial({ color: 0x1c1c1c, roughness: 0.4, metalness: 0.3 })
+          );
+          body.castShadow = true;
+          group.add(body);
+          const lens = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.12, 0.14, 0.18, 10),
+            new THREE.MeshStandardMaterial({ color: 0x66d2ff, emissive: 0x113344, emissiveIntensity: 0.4, roughness: 0.3 })
+          );
+          lens.rotation.x = Math.PI / 2;
+          lens.position.z = -0.32;
+          group.add(lens);
+          const helper = new THREE.CameraHelper(new THREE.PerspectiveCamera(50, 1.3, 0.15, 3.2));
+          helper.scale.set(0.35, 0.35, 0.35);
+          group.add(helper);
+          group.position.set(cam.x, cam.y, cam.z);
+          group.lookAt(0, 1.6, 0);
+          scene.world.add(group);
+          scene.objects.push(body, lens);
+        });
+      }
+
+      const marker = new THREE.Mesh(
+        new THREE.ConeGeometry(0.55, 1.8, 5),
+        new THREE.MeshStandardMaterial({ color: 0x9be7ff, roughness: 0.35, metalness: 0.2, emissive: 0x0a3038, emissiveIntensity: 0.45 })
+      );
+      marker.position.set(0, 1.0, 0);
+      marker.castShadow = true;
+      addMesh(marker);
+
+      scene.camera.position.set(16, 3.8, 18);
+      scene.yaw = Math.PI * 0.72;
+      scene.pitch = -0.08;
+      scene.vel.x = scene.vel.y = scene.vel.z = 0;
+      scene.grounded = true;
+    }
+
+    function sceneLoop(now) {
+      if (state.mode !== "scene") { scene.raf = 0; return; }
+      const dt = Math.min(0.05, (now - (scene.last || now)) / 1000) || 0.016;
+      scene.last = now;
+      let mx = 0, mz = 0;
+      if (scene.keys.w || scene.keys.arrowup) mz += 1;
+      if (scene.keys.s || scene.keys.arrowdown) mz -= 1;
+      if (scene.keys.a || scene.keys.arrowleft) mx += 1;
+      if (scene.keys.d || scene.keys.arrowright) mx -= 1;
+      const len = Math.hypot(mx, mz) || 1;
+      mx /= len; mz /= len;
+      const speed = (scene.keys.shift ? 14 : 5.6);
+      const fwdX = Math.sin(scene.yaw), fwdZ = Math.cos(scene.yaw);
+      scene.camera.position.x += (fwdX * mz + Math.cos(scene.yaw) * mx) * speed * dt;
+      scene.camera.position.z += (fwdZ * mz - Math.sin(scene.yaw) * mx) * speed * dt;
+      if (scene.jump) { scene.vel.y = 6.4; scene.grounded = false; scene.jump = false; }
+      scene.vel.y -= 22 * dt;
+      scene.camera.position.y += scene.vel.y * dt;
+      if (scene.camera.position.y <= 1.7) {
+        scene.camera.position.y = 1.7;
+        scene.vel.y = 0;
+        scene.grounded = true;
+      }
+      const look = new THREE.Vector3(
+        scene.camera.position.x + Math.sin(scene.yaw) * Math.cos(scene.pitch),
+        scene.camera.position.y + Math.sin(scene.pitch),
+        scene.camera.position.z + Math.cos(scene.yaw) * Math.cos(scene.pitch)
+      );
+      scene.camera.lookAt(look);
+      scene.renderer.render(scene.three, scene.camera);
+      scene.raf = requestAnimationFrame(sceneLoop);
+    }
+
+    async function enterScene() {
+      if (!state.selected) return;
+      showProgress("Loading 3D engine…", 8);
+      try {
+        await loadThree();
+      } catch (err) {
+        hideProgress();
+        toast("3D ENGINE UNAVAILABLE", "Three.js CDN blocked. Map still works.");
+        return;
+      }
+      showProgress("Finding imagery…", 10);
+      toast("BUILDING 3D FROM PHOTOS", "First run downloads Depth Anything V2 (~80MB), then it stays cached.");
+      try {
+        if (!state.photos.length) {
+          state.photos = await ImageryProvider.searchNearby(state.selected.lat, state.selected.lng);
+        }
+        if (!state.buildings.length) {
+          try { state.buildings = await GeoProvider.getBuildings(state.selected.lat, state.selected.lng, 170); } catch (_) {}
+        }
+        const payload = await ReconstructionProvider.reconstruct(
+          state.selected, state.photos, state.buildings, showProgress
+        );
+        state.recon = payload;
+        await buildScene(payload);
+        hideProgress();
+        setMode("scene");
+        document.getElementById("hud-status").textContent = payload.method + " — 3D from photos, not Google tiles";
+        scene.last = performance.now();
+        scene.raf = requestAnimationFrame(sceneLoop);
+      } catch (err) {
+        console.error(err);
+        hideProgress();
+        toast("3D REBUILD UNAVAILABLE", "Staying on the map.");
+      }
+    }
+
+    function exitScene() {
+      disposeScene();
+      setMode("explore");
+      if (state.map) try { state.map.resize(); } catch (_) {}
+    }
+
+    /* ---------- Search UI ---------- */
+    function hideSuggest() {
+      suggestList.classList.remove("is-on");
+      suggestList.replaceChildren();
+    }
+
+    function renderSuggest(items) {
+      state.suggestions = items;
+      suggestList.replaceChildren();
+      if (!items.length) { hideSuggest(); return; }
+      items.forEach((it, i) => {
+        const li = document.createElement("li");
+        if (i === 0) li.classList.add("is-on");
+        li.innerHTML = '<div class="main"></div><div class="sub"></div>';
+        li.querySelector(".main").textContent = it.name;
+        li.querySelector(".sub").textContent = it.formattedAddress;
+        li.onmousedown = (e) => { e.preventDefault(); pick(it); };
+        suggestList.appendChild(li);
+      });
+      suggestList.classList.add("is-on");
+    }
+
+    async function doSearch(q) {
+      const seq = ++state.searchSeq;
+      try {
+        const items = await GeoProvider.searchPlace(q);
+        if (seq !== state.searchSeq) return;
+        renderSuggest(items);
+      } catch (_) {
+        if (seq === state.searchSeq) hideSuggest();
+      }
+    }
+    const debouncedSearch = debounce(doSearch, 280);
+
+    function pick(loc) {
+      state.selected = loc;
+      hideSuggest();
+      document.getElementById("dest-name").textContent = loc.name.toUpperCase();
+      document.getElementById("dest-sub").textContent = loc.formattedAddress || "";
+      document.getElementById("dest-coords").innerHTML = fmtLat(loc.lat) + "<br>" + fmtLng(loc.lng);
+      destCard.classList.add("is-on");
+      searchInput.value = loc.name;
+      setMode("selected");
+    }
+
+    function saveKeysFrom(mlyEl, gmapEl) {
+      const mly = (mlyEl.value || "").trim();
+      const gmap = (gmapEl.value || "").trim();
+      if (mly && !/^MLY\|/i.test(mly)) {
+        toast("CHECK MAPILLARY TOKEN", "Tokens usually start with MLY| — save anyway if yours is different.");
+      }
+      writeKey(LS_MLY, mly);
+      writeKey(LS_GMAP, gmap);
+      try {
+        localStorage.setItem(LS_REMEMBER, document.getElementById("lobby-remember").checked ? "1" : "0");
+      } catch (_) {}
+      return { mly, gmap };
+    }
+
+    function fillKeyFields() {
+      const mly = mapillaryToken();
+      const gmap = googleKey();
+      const a = document.getElementById("lobby-mly");
+      const b = document.getElementById("lobby-gmap");
+      const c = document.getElementById("mly-token");
+      const d = document.getElementById("gmap-token");
+      if (a) a.value = mly;
+      if (b) b.value = gmap;
+      if (c) c.value = mly;
+      if (d) d.value = gmap;
+      try {
+        document.getElementById("lobby-remember").checked = localStorage.getItem(LS_REMEMBER) !== "0";
+      } catch (_) {}
+      updateLobbyNote();
+    }
+
+    function updateLobbyNote() {
+      const g = (document.getElementById("lobby-gmap").value || "").trim();
+      const m = (document.getElementById("lobby-mly").value || "").trim();
+      if (g) {
+        lobbyEngineNote.textContent = "Google key detected — ENTER starts photoreal Earth. If 3D Maps is not enabled on the key, WORLDS falls back to Google hybrid, then to open satellite.";
+        document.getElementById("enter-worlds").textContent = "ENTER GOOGLE EARTH";
+      } else {
+        lobbyEngineNote.textContent = "No Google key — open satellite Earth + OSM. " +
+          (m ? "Mapillary will be tried first for street photos." : "Street photos from KartaView / Wikimedia / Panoramax.");
+        document.getElementById("enter-worlds").textContent = "ENTER WORLDS";
+      }
+    }
+
+    async function bootWorld(forceGoogle) {
+      const keys = saveKeysFrom(document.getElementById("lobby-mly"), document.getElementById("lobby-gmap"));
+      setLobbyStatus("Starting…");
+      showBoot("Starting…");
+      let usedGoogle = false;
+      if (forceGoogle && keys.gmap) {
+        try {
+          await createGoogleEarth(keys.gmap);
+          usedGoogle = true;
+        } catch (err) {
+          console.warn(err);
+          setLobbyStatus("Google key failed — opening open Earth.");
+          toast("GOOGLE KEY FAILED", String(err.message || err) + " — using open satellite / OSM.");
+          destroyGoogle();
+        }
+      }
+      if (!usedGoogle) {
+        try {
+          await createMapLibre("sat");
+        } catch (err) {
+          hideBoot();
+          setLobbyStatus("Map failed to load. Check network / ad blockers, then retry.");
+          toast("MAP UNAVAILABLE", "Every open tile host failed. Disable blockers or try again.");
+          return false;
+        }
+      }
+      setMode("search");
+      hideBoot();
+      setLobbyStatus("");
+      requestAnimationFrame(() => {
+        if (state.map) try { state.map.resize(); } catch (_) {}
+        searchInput.focus();
+      });
+      return true;
+    }
+
+    function openLobby() {
+      fillKeyFields();
+      setMode("lobby");
+    }
+
+    function bindUi() {
+      fillKeyFields();
+      document.getElementById("lobby-gmap").addEventListener("input", updateLobbyNote);
+      document.getElementById("lobby-mly").addEventListener("input", updateLobbyNote);
+      document.getElementById("enter-worlds").onclick = () => bootWorld(true);
+      document.getElementById("enter-skip").onclick = () => bootWorld(false);
+
+      searchInput.addEventListener("input", () => {
+        destCard.classList.remove("is-on");
+        if (state.mode === "selected") setMode("search");
+        debouncedSearch(searchInput.value);
+      });
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (state.suggestions && state.suggestions[0]) pick(state.suggestions[0]);
+          else doSearch(searchInput.value).then(() => {
+            if (state.suggestions && state.suggestions[0]) pick(state.suggestions[0]);
+          });
+        }
+        if (e.key === "Escape") hideSuggest();
+      });
+      document.getElementById("chips").addEventListener("click", (e) => {
+        const c = e.target.closest("[data-q]");
+        if (!c) return;
+        searchInput.value = c.dataset.q;
+        doSearch(c.dataset.q).then(() => {
+          if (state.suggestions && state.suggestions[0]) pick(state.suggestions[0]);
+        });
+      });
+      document.getElementById("go-there").onclick = () => { if (state.selected) flyToLocation(state.selected); };
+      document.getElementById("dest-close").onclick = () => { destCard.classList.remove("is-on"); setMode("search"); };
+      document.getElementById("exit-btn").onclick = () => {
+        state.flyId++;
+        disposeScene();
+        state.selected = null;
+        if (state.engine === "google3d" && state.g3d) {
+          g3dFly(state.g3d, { lat: 20.5, lng: 78.9 }, 16000000, 0, 0, 1800);
+        } else if (state.engine === "google2d" && state.g2d) {
+          state.g2d.setOptions({ tilt: 0 });
+          state.g2d.panTo({ lat: 20.5, lng: 78.9 });
+          state.g2d.setZoom(3);
+        } else if (state.map) {
+          state.map.flyTo({ center: [78.9, 20.5], zoom: 2.15, pitch: 0, bearing: 0, duration: 1800 });
+        }
+        setMode("search");
+        searchInput.value = "";
+        document.getElementById("gallery").classList.remove("is-on");
+      };
+      document.getElementById("explore-3d").onclick = enterScene;
+      document.getElementById("scene-exit").onclick = exitScene;
+      document.getElementById("help-btn").onclick = () => {
+        document.getElementById("help-panel").classList.toggle("is-on");
+        document.getElementById("sources-panel").classList.remove("is-on");
+      };
+      document.getElementById("sources-btn").onclick = () => {
+        document.getElementById("sources-panel").classList.toggle("is-on");
+        document.getElementById("help-panel").classList.remove("is-on");
+        fillKeyFields();
+      };
+      document.getElementById("keys-btn").onclick = openLobby;
+      document.getElementById("style-btn").onclick = () => {
+        if (state.engine !== "maplibre") {
+          toast("STYLE LOCKED", "Google Earth is active. Clear the Google key in KEYS to use open SAT / OSM.");
+          return;
+        }
+        applyBasemap(state.basemap === "sat" ? "streets" : "sat");
+      };
+      document.getElementById("mly-save").onclick = () => {
+        const { mly, gmap } = saveKeysFrom(document.getElementById("mly-token"), document.getElementById("gmap-token"));
+        document.getElementById("lobby-mly").value = mly;
+        document.getElementById("lobby-gmap").value = gmap;
+        toast("KEYS SAVED", (mly ? "Mapillary on. " : "No Mapillary. ") + (gmap ? "Google key stored — press APPLY EARTH." : "Open Earth stays active."));
+      };
+      document.getElementById("apply-earth").onclick = async () => {
+        const { gmap } = saveKeysFrom(document.getElementById("mly-token"), document.getElementById("gmap-token"));
+        document.getElementById("sources-panel").classList.remove("is-on");
+        if (!gmap) {
+          destroyGoogle();
+          try { await createMapLibre(state.basemap); toast("OPEN EARTH", "Google key cleared."); }
+          catch (err) { toast("MAP FAILED", String(err.message || err)); }
+          return;
+        }
+        try {
+          if (state.map) { try { state.map.remove(); } catch (_) {} state.map = null; }
+          await createGoogleEarth(gmap);
+          toast("GOOGLE EARTH", state.engine === "google3d" ? "Photoreal 3D is on." : "Hybrid map is on.");
+        } catch (err) {
+          toast("GOOGLE FAILED", String(err.message || err));
+          try { await createMapLibre("sat"); } catch (_) {}
+        }
+      };
+
+      document.addEventListener("keydown", (e) => {
+        if (state.mode !== "scene") return;
+        if (!e.key) return;
+        const k = String(e.key).toLowerCase();
+        if (k === " ") { e.preventDefault(); scene.jump = true; }
+        if ("wasd".includes(k) || k.startsWith("arrow") || k === "shift") {
+          e.preventDefault();
+          scene.keys[k] = true;
+        }
+      });
+      document.addEventListener("keyup", (e) => {
+        if (!e.key) return;
+        const k = String(e.key).toLowerCase();
+        scene.keys[k] = false;
+      });
+      const canvas = document.getElementById("scene-root");
+      canvas.addEventListener("click", () => canvas.requestPointerLock && canvas.requestPointerLock());
+      document.addEventListener("mousemove", (e) => {
+        if (document.pointerLockElement !== canvas) return;
+        scene.yaw -= e.movementX * 0.003;
+        scene.pitch = Math.max(-1.2, Math.min(1.2, scene.pitch - e.movementY * 0.0025));
+      });
+    }
+
+    /* FUTURE: Qwen / Shakti / RAG / Bulbul / ASR / historical AI — world must work without them. */
+
+    window.__worldsDead = function () {
+      var el = document.getElementById("lobby-status");
+      if (el) el.textContent = "App script did not finish loading. Hard-refresh (Ctrl+F5).";
+    };
+    window.__worldsEnter = function (forceGoogle) {
+      return bootWorld(!!forceGoogle);
+    };
+    try {
+      bindUi();
+      var ready = document.getElementById("lobby-status");
+      if (ready) ready.textContent = "Ready.";
+    } catch (err) {
+      console.error(err);
+      var el = document.getElementById("lobby-status");
+      if (el) el.textContent = "UI bind failed: " + (err && err.message ? err.message : err);
+    }
+  </script>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a30a44a59b4a0cc7',t:'MTc4NzY1NzQ2Mg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226cdae34746b4dedf0b4dfa099e1781791509496" integrity="sha512-ZE9pZaUXND66v380QUtch/5sE9tPFh2zg45pR2PB0CVkCtOREv2AJKkSidISWkysEuQ0EH8faUU5du78bx87UQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f"}' crossorigin="anonymous"></script>
+</body>
+</html>
