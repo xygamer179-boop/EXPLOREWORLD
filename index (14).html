@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>WORLDS — Photoreal Earth</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23070b10' stroke='%239be7ff' stroke-width='2'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.1/maplibre-gl.css" />
+  <style>
+    :root {
+      --bg: #07090c;
+      --ink: #edf2f6;
+      --muted: #8b96a3;
+      --faint: #5c6670;
+      --line: rgba(255,255,255,.1);
+      --glass: rgba(9,12,16,.62);
+      --accent: #9be7ff;
+      --accent-glow: rgba(155,231,255,.28);
+      --shadow: 0 24px 64px rgba(0,0,0,.45);
+      --sans: "Segoe UI","Helvetica Neue","SF Pro Display",system-ui,sans-serif;
+      --mono: ui-monospace, Menlo, Consolas, monospace;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; }
+    html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+    button, input { font: inherit; color: inherit; }
+    button { cursor: pointer; border: 0; background: none; }
+    button:disabled { opacity: .45; cursor: default; }
+
+    #map-root, #earth-root { position: absolute; inset: 0; }
+    #earth-root { display: none; z-index: 2; }
+    #app[data-engine="cesium"] #earth-root,
+    #app[data-engine="google3d"] #earth-root,
+    #app[data-engine="google2d"] #earth-root { display: block; }
+    #app[data-engine="cesium"] #map-root,
+    #app[data-engine="google3d"] #map-root,
+    #app[data-engine="google2d"] #map-root { opacity: 0; pointer-events: none; }
+    #earth-root .cesium-viewer, #earth-root .cesium-viewer-cesiumWidgetContainer,
+    #earth-root .cesium-widget, #earth-root canvas { width: 100%; height: 100%; }
+    #earth-root gmp-map-3d { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .cesium-viewer-toolbar, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer,
+    .cesium-viewer-fullscreenContainer, .cesium-viewer-vrButton { display: none !important; }
+    .cesium-viewer-bottom { left: 10px !important; bottom: 8px !important; }
+
+    .glass {
+      background: var(--glass);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(20px) saturate(140%);
+      -webkit-backdrop-filter: blur(20px) saturate(140%);
+    }
+
+    #lobby {
+      position: absolute; inset: 0; z-index: 55;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px 16px;
+      background:
+        radial-gradient(900px 480px at 50% 115%, rgba(46,110,168,.32), transparent 58%),
+        linear-gradient(180deg, #04070c 0%, #070b12 100%);
+    }
+    #app:not([data-mode="lobby"]) #lobby { display: none; }
+    #lobby-card { position: relative; width: min(540px, 100%); padding: 28px 24px 22px; border-radius: 24px; z-index: 1; }
+    #lobby-card .mark { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .42em; padding-left: .42em; }
+    #lobby-card h1 { margin: 14px 0 8px; font-size: clamp(26px, 5vw, 36px); letter-spacing: .04em; }
+    #lobby-card .lede { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .key-block { margin: 0 0 14px; }
+    .key-block label { display: block; font-size: 10px; letter-spacing: .16em; color: var(--faint); margin-bottom: 6px; }
+    .key-block input {
+      width: 100%; height: 42px; border-radius: 12px; border: 1px solid var(--line);
+      background: rgba(0,0,0,.32); padding: 0 12px; outline: none;
+    }
+    .key-block .hint { margin: 6px 0 0; font-size: 11px; color: var(--faint); line-height: 1.45; }
+    .key-block a { color: var(--accent); text-decoration: none; }
+    .remember { display: flex; align-items: center; gap: 8px; margin: 4px 0 16px; font-size: 12px; color: var(--muted); }
+    #enter-worlds {
+      width: 100%; height: 52px; border-radius: 999px; background: var(--accent); color: #061018;
+      font-size: 12px; font-weight: 800; letter-spacing: .16em; box-shadow: 0 0 28px var(--accent-glow);
+    }
+    #enter-skip { width: 100%; height: 40px; margin-top: 8px; font-size: 11px; letter-spacing: .14em; color: var(--muted); }
+    #lobby-status { min-height: 18px; margin: 10px 0 0; font-size: 12px; color: var(--accent); text-align: center; }
+    .engine-note {
+      margin: 14px 0 0; padding: 10px 12px; border-radius: 12px;
+      background: rgba(155,231,255,.06); border: 1px solid rgba(155,231,255,.12);
+      font-size: 12px; color: var(--muted); line-height: 1.45;
+    }
+
+    #brand {
+      position: absolute; top: calc(22px + var(--safe-top)); left: 50%;
+      transform: translateX(-50%); z-index: 12; text-align: center; pointer-events: none;
+    }
+    #brand .mark { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .42em; padding-left: .42em; }
+    #brand .tag { margin: 8px 0 0; font-size: 10px; letter-spacing: .32em; color: var(--muted); }
+    #app[data-mode="lobby"] #brand { display: none; }
+    #app[data-mode="explore"] #brand, #app[data-mode="flying"] #brand {
+      left: 18px; transform: none; text-align: left;
+    }
+    #app[data-mode="explore"] #brand .tag, #app[data-mode="flying"] #brand .tag { display: none; }
+
+    #search-shell {
+      position: absolute; left: 50%; top: 40%; transform: translate(-50%,-50%);
+      width: min(560px, calc(100vw - 28px)); z-index: 14; display: flex; flex-direction: column; gap: 12px;
+    }
+    #app[data-mode="selected"] #search-shell { top: 32%; }
+    #app[data-mode="lobby"] #search-shell,
+    #app[data-mode="explore"] #search-shell,
+    #app[data-mode="flying"] #search-shell { opacity: 0; pointer-events: none; }
+
+    #search-bar { display: flex; align-items: center; height: 56px; padding: 0 16px; border-radius: 999px; }
+    #search-input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font-size: 16px; }
+    #suggest-list { list-style: none; margin: 0; padding: 8px; border-radius: 16px; max-height: 42vh; overflow: auto; display: none; }
+    #suggest-list.is-on { display: block; }
+    #suggest-list li { padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+    #suggest-list li:hover, #suggest-list li.is-on { background: rgba(255,255,255,.06); }
+    #suggest-list .main { font-weight: 600; font-size: 14px; }
+    #suggest-list .sub { font-size: 12px; color: var(--muted); }
+    #chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    #app[data-mode="selected"] #chips { display: none; }
+    .chip { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; background: rgba(8,12,16,.35); }
+
+    #dest-card { display: none; padding: 20px; border-radius: 20px; }
+    #dest-card.is-on { display: block; }
+    #dest-name { margin: 0; font-size: 20px; letter-spacing: .14em; font-weight: 700; }
+    #dest-sub { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    #dest-coords { margin: 14px 0; font-family: var(--mono); font-size: 12px; color: var(--accent); line-height: 1.6; }
+    .btn-walk {
+      width: 100%; height: 48px; border-radius: 999px; font-size: 12px; font-weight: 800;
+      letter-spacing: .18em; background: var(--accent); color: #061018; box-shadow: 0 0 24px var(--accent-glow);
+    }
+    .btn-ghost {
+      height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line);
+      font-size: 10px; font-weight: 700; letter-spacing: .16em;
+    }
+    .icon-btn { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); color: var(--muted); }
+
+    #hud {
+      position: absolute; left: 16px; bottom: calc(16px + var(--safe-bottom));
+      z-index: 16; width: min(320px, calc(100vw - 80px)); padding: 14px; border-radius: 16px; display: none;
+    }
+    #app[data-mode="explore"] #hud { display: block; }
+    #hud-name { margin: 0; font-size: 13px; letter-spacing: .16em; font-weight: 700; }
+    #hud-sub { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+    #hud-status { margin: 8px 0 0; font-size: 11px; color: var(--accent); }
+    #hud-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+    #flight {
+      position: absolute; inset: 0; z-index: 20; pointer-events: none; opacity: 0;
+      display: flex; flex-direction: column; justify-content: flex-end;
+      padding: 24px 24px calc(24px + var(--safe-bottom));
+    }
+    #app[data-mode="flying"] #flight { opacity: 1; }
+    #flight-stage { margin: 0 0 6px; font-size: 11px; letter-spacing: .3em; color: var(--accent); }
+    #flight-title { margin: 0; font-size: clamp(28px, 5vw, 46px); letter-spacing: .1em; }
+
+    #gallery {
+      position: absolute; right: 16px; bottom: calc(16px + var(--safe-bottom));
+      z-index: 16; width: min(220px, 42vw); padding: 10px; border-radius: 14px; display: none;
+    }
+    #app[data-mode="explore"] #gallery.is-on { display: block; }
+    #gallery img { width: 100%; height: 88px; object-fit: cover; border-radius: 8px; display: block; margin-top: 6px; background: #111; }
+    #gallery .cap { font-size: 10px; letter-spacing: .12em; color: var(--faint); }
+
+    #sources-btn, #help-btn, #keys-btn {
+      position: absolute; z-index: 18; height: 34px; padding: 0 12px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; letter-spacing: .14em;
+    }
+    #help-btn { right: 16px; bottom: calc(16px + var(--safe-bottom)); width: 36px; padding: 0; }
+    #sources-btn { right: 58px; bottom: calc(16px + var(--safe-bottom)); }
+    #keys-btn { right: 148px; bottom: calc(16px + var(--safe-bottom)); }
+    #app[data-mode="lobby"] #sources-btn,
+    #app[data-mode="lobby"] #help-btn,
+    #app[data-mode="lobby"] #keys-btn { display: none; }
+    #help-panel, #sources-panel {
+      position: absolute; right: 16px; bottom: calc(58px + var(--safe-bottom));
+      z-index: 22; width: min(360px, calc(100vw - 24px)); padding: 16px; border-radius: 16px; display: none;
+    }
+    #help-panel.is-on, #sources-panel.is-on { display: block; }
+    #help-panel h3, #sources-panel h3 { margin: 0 0 10px; font-size: 11px; letter-spacing: .2em; }
+    #help-panel .row { display: flex; justify-content: space-between; font-size: 13px; margin: 6px 0; color: var(--muted); }
+    #sources-panel p { margin: 6px 0; color: var(--muted); line-height: 1.45; font-size: 12px; }
+
+    #toast {
+      position: absolute; left: 50%; bottom: calc(24px + var(--safe-bottom)); transform: translateX(-50%);
+      z-index: 40; max-width: min(460px, calc(100vw - 24px)); padding: 12px 14px; border-radius: 12px;
+      font-size: 12px; text-align: center; opacity: 0; pointer-events: none;
+    }
+    #toast.is-on { opacity: 1; }
+    #toast strong { display: block; letter-spacing: .14em; margin-bottom: 4px; }
+
+    #file-warn {
+      display: none; position: absolute; left: 50%; top: calc(10px + var(--safe-top)); transform: translateX(-50%);
+      z-index: 70; width: min(560px, calc(100vw - 20px)); padding: 12px; border-radius: 12px;
+      background: #2a1510; border: 1px solid rgba(255,180,160,.35); color: #ffd8cc; font-size: 13px; text-align: center;
+    }
+    #file-warn.is-on { display: block; }
+    #file-warn code { color: var(--accent); }
+
+    #boot {
+      position: absolute; left: 50%; top: 46%; transform: translate(-50%,-50%);
+      z-index: 25; padding: 14px 18px; border-radius: 14px; display: none; text-align: center;
+    }
+    #boot.is-on { display: block; }
+    #boot p { margin: 0; font-size: 12px; letter-spacing: .1em; color: var(--accent); }
+
+    .maplibregl-ctrl-attrib { font-size: 10px; }
+    .maplibregl-ctrl-bottom-left { display: none; }
+
+    @media (max-width: 720px) {
+      #search-shell { top: auto; bottom: calc(22px + var(--safe-bottom)); transform: translate(-50%, 0); }
+      #keys-btn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" data-mode="lobby" data-engine="none">
+    <div id="map-root"></div>
+    <div id="earth-root"></div>
+    <div id="file-warn">Open over http, not as a file. Run <code>python3 -m http.server 8000</code></div>
+
+    <div id="lobby">
+      <section id="lobby-card" class="glass">
+        <p class="mark">WORLDS</p>
+        <h1>Photoreal Earth.</h1>
+        <p class="lede">Google Photorealistic 3D Tiles — the real textured mesh of cities. Paste your Maps key. Without it you still get open satellite Earth.</p>
+        <div class="key-block">
+          <label for="lobby-gmap">GOOGLE MAPS KEY — required for photoreal 3D</label>
+          <input id="lobby-gmap" type="password" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+          <p class="hint">Enable <b>billing</b>, <b>Map Tiles API</b>, and <b>Maps JavaScript API</b>. Restrict the key to this site. <a href="https://console.cloud.google.com/google/maps-apis/api-list" target="_blank" rel="noopener">Cloud Console</a></p>
+        </div>
+        <div class="key-block">
+          <label for="lobby-mly">MAPILLARY TOKEN — optional street photos</label>
+          <input id="lobby-mly" type="password" placeholder="MLY|…" autocomplete="off" spellcheck="false" />
+        </div>
+        <label class="remember"><input id="lobby-remember" type="checkbox" checked /> Remember keys on this device</label>
+        <button id="enter-worlds" type="button" onclick="window.__worldsEnter && window.__worldsEnter(true)">ENTER PHOTOREAL 3D</button>
+        <button id="enter-skip" type="button" onclick="window.__worldsEnter && window.__worldsEnter(false)">CONTINUE WITHOUT GOOGLE</button>
+        <p id="lobby-status"></p>
+        <p class="engine-note" id="lobby-engine-note">Photoreal 3D Tiles are Google’s mesh, rendered with Cesium. This is not a homemade reconstruction.</p>
+      </section>
+    </div>
+
+    <header id="brand">
+      <p class="mark">WORLDS</p>
+      <p class="tag">PHOTOREAL 3D TILES</p>
+    </header>
+
+    <section id="search-shell">
+      <div id="search-bar" class="glass">
+        <input id="search-input" type="text" placeholder="Search any place..." autocomplete="off" spellcheck="false" />
+      </div>
+      <ul id="suggest-list" class="glass"></ul>
+      <div id="chips">
+        <button class="chip" data-q="Varanasi">Varanasi</button>
+        <button class="chip" data-q="Lucknow">Lucknow</button>
+        <button class="chip" data-q="Tokyo">Tokyo</button>
+        <button class="chip" data-q="Paris">Paris</button>
+        <button class="chip" data-q="New York">New York</button>
+        <button class="chip" data-q="San Francisco">San Francisco</button>
+      </div>
+      <article id="dest-card" class="glass">
+        <div style="display:flex;justify-content:space-between;gap:12px">
+          <div>
+            <h2 id="dest-name">—</h2>
+            <p id="dest-sub"></p>
+          </div>
+          <button class="icon-btn" id="dest-close" type="button">✕</button>
+        </div>
+        <div id="dest-coords"></div>
+        <button class="btn-walk" id="go-there" type="button">FLY THERE</button>
+      </article>
+    </section>
+
+    <aside id="hud" class="glass">
+      <p id="hud-name">—</p>
+      <p id="hud-sub"></p>
+      <p id="hud-status">Earth</p>
+      <div id="hud-actions">
+        <button class="btn-ghost" id="exit-btn" type="button">EXIT</button>
+        <button class="btn-ghost" id="explore-3d" type="button">STREET LEVEL</button>
+      </div>
+    </aside>
+
+    <aside id="gallery" class="glass">
+      <div class="cap">STREET IMAGERY</div>
+      <img id="gallery-img" alt="Nearby street photo" referrerpolicy="no-referrer" />
+      <div class="cap" id="gallery-cap"></div>
+    </aside>
+
+    <div id="boot" class="glass"><p id="boot-copy">Loading photoreal 3D…</p></div>
+    <div id="flight">
+      <p id="flight-stage">EARTH</p>
+      <h2 id="flight-title">WORLDS</h2>
+    </div>
+
+    <button id="keys-btn" class="glass" type="button">KEYS</button>
+    <button id="sources-btn" class="glass" type="button">SOURCES</button>
+    <button id="help-btn" class="glass" type="button">?</button>
+    <div id="help-panel" class="glass">
+      <h3>CONTROLS</h3>
+      <div class="row"><span>Drag</span><b>Orbit / pan</b></div>
+      <div class="row"><span>Scroll</span><b>Zoom</b></div>
+      <div class="row"><span>Right-drag</span><b>Tilt</b></div>
+      <div class="row"><span>STREET LEVEL</span><b>Drop to ~180m</b></div>
+    </div>
+    <div id="sources-panel" class="glass">
+      <h3>SOURCES</h3>
+      <p>Photoreal 3D: Google Map Tiles API — Photorealistic 3D Tiles, rendered with CesiumJS. Imagery © Google.</p>
+      <p>Fallback globe: Esri World Imagery + OpenStreetMap. Search: Open-Meteo + Photon.</p>
+      <p>Street photos: Mapillary / KartaView / Wikimedia / Panoramax.</p>
+      <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.16em;color:#5c6670">GOOGLE MAPS KEY</label>
+      <input id="gmap-token" type="password" placeholder="AIza…" autocomplete="off" style="width:100%;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.28);padding:0 10px" />
+      <label style="display:block;margin:12px 0 6px;font-size:10px;letter-spacing:.16em;color:#5c6670">MAPILLARY TOKEN</label>
+      <input id="mly-token" type="password" placeholder="MLY|…" autocomplete="off" style="width:100%;height:36px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.28);padding:0 10px" />
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn-ghost" id="mly-save" type="button">SAVE KEYS</button>
+        <button class="btn-ghost" id="apply-earth" type="button">APPLY 3D TILES</button>
+      </div>
+    </div>
+    <div id="toast" class="glass"></div>
+  </div>
+
+  <script>
+    const LS_MLY = "WORLDS_MAPILLARY";
+    const LS_GMAP = "WORLDS_GOOGLE";
+    const LS_REMEMBER = "WORLDS_REMEMBER";
+    const CESIUM_BASE = "https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/";
+    const TILES_URL = "https://tile.googleapis.com/v1/3dtiles/root.json?key=";
+    const ML_JS = [
+      "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.6.1/maplibre-gl.min.js",
+      "https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.1/dist/maplibre-gl.js"
+    ];
+
+    const app = document.getElementById("app");
+    const searchInput = document.getElementById("search-input");
+    const suggestList = document.getElementById("suggest-list");
+    const destCard = document.getElementById("dest-card");
+    const toastEl = document.getElementById("toast");
+    const lobbyStatus = document.getElementById("lobby-status");
+
+    const state = {
+      mode: "lobby",
+      engine: "none",
+      map: null,
+      viewer: null,
+      tileset: null,
+      g3d: null,
+      g2d: null,
+      selected: null,
+      photos: [],
+      flyId: 0,
+      searchSeq: 0,
+      suggestions: []
+    };
+
+    const memStore = Object.create(null);
+    if (location.protocol === "file:") document.getElementById("file-warn").classList.add("is-on");
+
+    function readKey(name) {
+      try { return (localStorage.getItem(name) || sessionStorage.getItem(name) || memStore[name] || "").trim(); }
+      catch (_) { return String(memStore[name] || "").trim(); }
+    }
+    function writeKey(name, value) {
+      memStore[name] = value || "";
+      try {
+        sessionStorage.removeItem(name);
+        localStorage.removeItem(name);
+        const remember = !document.getElementById("lobby-remember") || document.getElementById("lobby-remember").checked;
+        const store = remember ? localStorage : sessionStorage;
+        if (value) store.setItem(name, value);
+      } catch (_) {}
+    }
+    function googleKey() { return readKey(LS_GMAP); }
+    function mapillaryToken() { return readKey(LS_MLY); }
+
+    function setMode(mode) { state.mode = mode; app.dataset.mode = mode; }
+    function setEngine(kind) { state.engine = kind; app.dataset.engine = kind; }
+
+    function toast(title, body, ms) {
+      toastEl.innerHTML = "<strong>" + title + "</strong>" + (body || "");
+      toastEl.classList.add("is-on");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => toastEl.classList.remove("is-on"), ms || 5200);
+    }
+    function showBoot(text) {
+      document.getElementById("boot-copy").textContent = text || "Loading…";
+      document.getElementById("boot").classList.add("is-on");
+    }
+    function hideBoot() { document.getElementById("boot").classList.remove("is-on"); }
+    function setLobbyStatus(t) { lobbyStatus.textContent = t || ""; }
+    function debounce(fn, wait) {
+      let t = 0;
+      return function () { const a = arguments; clearTimeout(t); t = setTimeout(() => fn.apply(null, a), wait); };
+    }
+    function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
+    function fmtLat(lat) { return Math.abs(lat).toFixed(4) + "° " + (lat >= 0 ? "N" : "S"); }
+    function fmtLng(lng) { return Math.abs(lng).toFixed(4) + "° " + (lng >= 0 ? "E" : "W"); }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve(src);
+        s.onerror = () => reject(new Error("script " + src));
+        document.head.appendChild(s);
+      });
+    }
+    function loadCss(href) {
+      return new Promise((resolve, reject) => {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = href;
+        l.onload = resolve;
+        l.onerror = reject;
+        document.head.appendChild(l);
+      });
+    }
+    async function loadFirst(urls) {
+      let last = null;
+      for (const u of urls) {
+        try { return await loadScript(u); } catch (e) { last = e; }
+      }
+      throw last || new Error("scripts failed");
+    }
+
+    /* ---------- Search (no Google Geocoding — that needs extra billing) ---------- */
+    async function searchPlace(query) {
+      const q = String(query || "").trim();
+      if (q.length < 2) return [];
+      try {
+        const res = await fetch("https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(q) + "&count=8&language=en&format=json");
+        const data = await res.json();
+        return (data.results || []).map((r) => ({
+          name: r.name,
+          formattedAddress: [r.admin1, r.country].filter(Boolean).join(", "),
+          lat: r.latitude,
+          lng: r.longitude
+        }));
+      } catch (_) {
+        const res = await fetch("https://photon.komoot.io/api/?q=" + encodeURIComponent(q) + "&limit=8");
+        const data = await res.json();
+        return (data.features || []).map((f) => {
+          const p = f.properties || {};
+          const c = f.geometry && f.geometry.coordinates;
+          return {
+            name: p.name || q,
+            formattedAddress: [p.city, p.state, p.country].filter(Boolean).join(", "),
+            lat: c ? c[1] : 0,
+            lng: c ? c[0] : 0
+          };
+        });
+      }
+    }
+
+    /* ---------- Street photos (gallery only) ---------- */
+    function kartaUrl(raw) {
+      if (!raw) return "";
+      const s = String(raw).trim();
+      if (/^https?:\/\//i.test(s)) return s;
+      const stor = s.match(/^(storage\d+)\/(files\/.+)$/i);
+      if (stor) return "https://" + stor[1].toLowerCase() + ".openstreetcam.org/" + stor[2];
+      return "https://api.openstreetcam.org/" + (s.startsWith("/") ? s.slice(1) : s);
+    }
+    async function findPhotos(lat, lng) {
+      const out = [];
+      const token = mapillaryToken();
+      const jobs = [];
+      if (token) {
+        jobs.push((async () => {
+          const d = 0.002;
+          const qs = new URLSearchParams({
+            fields: "id,thumb_256_url,geometry",
+            limit: "20",
+            bbox: [lng - d, lat - d, lng + d, lat + d].join(",")
+          });
+          const res = await fetch("https://graph.mapillary.com/images?" + qs, { headers: { Authorization: "OAuth " + token } });
+          if (!res.ok) return;
+          const data = await res.json();
+          (data.data || []).forEach((img) => {
+            const c = img.geometry && img.geometry.coordinates;
+            if (img.thumb_256_url) out.push({ url: img.thumb_256_url, lat: c ? c[1] : lat, lng: c ? c[0] : lng, attribution: "© Mapillary (CC BY-SA)" });
+          });
+        })());
+      }
+      jobs.push((async () => {
+        const res = await fetch("https://api.openstreetcam.org/1.0/list/nearby-photos/", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ lat: String(lat), lng: String(lng), radius: "400", ipp: "20", page: "1" })
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = (data.osv && data.osv.photos) || data.currentPageItems || [];
+        list.forEach((p) => {
+          const url = kartaUrl(p.lth_name || p.name || p.th_name);
+          if (url) out.push({ url: url, lat: parseFloat(p.lat), lng: parseFloat(p.lng), attribution: "KartaView (CC BY-SA)" });
+        });
+      })());
+      await Promise.allSettled(jobs);
+      return out;
+    }
+
+    /* ---------- Cesium + Google Photorealistic 3D Tiles ---------- */
+    async function loadCesium() {
+      if (window.Cesium) return;
+      window.CESIUM_BASE_URL = CESIUM_BASE;
+      await loadCss(CESIUM_BASE + "Widgets/widgets.css").catch(() => {});
+      await loadFirst([
+        CESIUM_BASE + "Cesium.js",
+        "https://ajax.googleapis.com/ajax/libs/cesiumjs/1.105/Build/Cesium/Cesium.js"
+      ]);
+      if (!window.Cesium) throw new Error("Cesium failed to load");
+    }
+
+    function destroyEarth() {
+      if (state.viewer) {
+        try { state.viewer.destroy(); } catch (_) {}
+      }
+      state.viewer = null;
+      state.tileset = null;
+      if (state.g3d && state.g3d.remove) {
+        try { state.g3d.remove(); } catch (_) {}
+      }
+      state.g3d = null;
+      state.g2d = null;
+      document.getElementById("earth-root").replaceChildren();
+    }
+
+    async function probeTiles(key) {
+      const res = await fetch(TILES_URL + encodeURIComponent(key));
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error("Map Tiles API " + res.status + (text ? " — " + text.slice(0, 160) : "") +
+          ". Enable billing + Map Tiles API on this key.");
+      }
+    }
+
+    async function createCesiumEarth(key) {
+      showBoot("Starting Google Photorealistic 3D Tiles…");
+      await probeTiles(key);
+      await loadCesium();
+      destroyEarth();
+      const root = document.getElementById("earth-root");
+      root.replaceChildren();
+      if (Cesium.RequestScheduler) {
+        try { Cesium.RequestScheduler.requestsByServer["tile.googleapis.com:443"] = 18; } catch (_) {}
+      }
+      const opts = {
+        animation: false,
+        timeline: false,
+        geocoder: false,
+        homeButton: false,
+        sceneModePicker: false,
+        baseLayerPicker: false,
+        navigationHelpButton: false,
+        fullscreenButton: false,
+        infoBox: false,
+        selectionIndicator: false,
+        requestRenderMode: false
+      };
+      let viewer;
+      try {
+        viewer = new Cesium.Viewer(root, Object.assign({ globe: false, baseLayer: false, skyBox: false }, opts));
+      } catch (_) {
+        viewer = new Cesium.Viewer(root, Object.assign({ imageryProvider: false }, opts));
+        if (viewer.scene.globe) viewer.scene.globe.show = false;
+      }
+      if (viewer.imageryLayers && viewer.imageryLayers.removeAll) {
+        try { viewer.imageryLayers.removeAll(); } catch (_) {}
+      }
+      const url = TILES_URL + encodeURIComponent(key);
+      let tileset;
+      if (Cesium.Cesium3DTileset.fromUrl) {
+        tileset = await Cesium.Cesium3DTileset.fromUrl(url, { showCreditsOnScreen: true });
+      } else {
+        tileset = new Cesium.Cesium3DTileset({ url: url, showCreditsOnScreen: true });
+      }
+      viewer.scene.primitives.add(tileset);
+      state.viewer = viewer;
+      state.tileset = tileset;
+      setEngine("cesium");
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(78.9, 20.5, 16000000),
+        orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 }
+      });
+      hideBoot();
+      return "cesium";
+    }
+
+    function cesiumFly(lng, lat, height, heading, pitch, duration) {
+      return new Promise((resolve) => {
+        state.viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lng, lat, height),
+          orientation: {
+            heading: Cesium.Math.toRadians(heading || 0),
+            pitch: Cesium.Math.toRadians(pitch),
+            roll: 0
+          },
+          duration: (duration || 1500) / 1000,
+          complete: resolve,
+          cancel: resolve
+        });
+      });
+    }
+
+    /* Map3DElement fallback if Cesium tiles fail but JS API works */
+    function installMapsBootstrap(key) {
+      const g = { key: key, v: "weekly" };
+      (function (g) {
+        var h, a, k, p = "The Google Maps JavaScript API", c = "google", l = "importLibrary", q = "__ib__", m = document, b = window;
+        b = b[c] || (b[c] = {});
+        var d = b.maps || (b.maps = {}), r = new Set(), e = new URLSearchParams();
+        var u = function () {
+          return h || (h = new Promise(function (f, n) {
+            a = m.createElement("script");
+            e.set("libraries", Array.from(r).join(","));
+            for (k in g) e.set(k.replace(/[A-Z]/g, function (t) { return "_" + t[0].toLowerCase(); }), g[k]);
+            e.set("callback", c + ".maps." + q);
+            a.src = "https://maps." + c + "apis.com/maps/api/js?" + e;
+            d[q] = f;
+            a.onerror = function () { n(new Error(p + " could not load")); };
+            m.head.appendChild(a);
+          }));
+        };
+        if (typeof d[l] !== "function") {
+          d[l] = function (f) {
+            r.add(f);
+            var rest = Array.prototype.slice.call(arguments, 1);
+            return u().then(function () { return d[l].apply(d, [f].concat(rest)); });
+          };
+        }
+      })(g);
+    }
+
+    async function createMap3D(key) {
+      showBoot("Starting Google 3D Maps…");
+      installMapsBootstrap(key);
+      if (typeof google.maps.importLibrary !== "function") throw new Error("importLibrary missing");
+      const lib = await google.maps.importLibrary("maps3d");
+      destroyEarth();
+      const el = new lib.Map3DElement({
+        center: { lat: 20.5, lng: 78.9, altitude: 0 },
+        range: 16000000,
+        tilt: 0,
+        heading: 0,
+        mode: (lib.MapMode && lib.MapMode.HYBRID) || "HYBRID",
+        defaultUIHidden: true
+      });
+      el.style.width = "100%";
+      el.style.height = "100%";
+      document.getElementById("earth-root").appendChild(el);
+      state.g3d = el;
+      setEngine("google3d");
+      hideBoot();
+      return "google3d";
+    }
+
+    function g3dFly(el, loc, range, tilt, heading, ms) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = () => { if (!settled) { settled = true; el.removeEventListener("gmp-animationend", done); resolve(); } };
+        el.addEventListener("gmp-animationend", done);
+        setTimeout(done, ms + 900);
+        el.flyCameraTo({
+          endCamera: { center: { lat: loc.lat, lng: loc.lng, altitude: 0 }, range: range, tilt: tilt, heading: heading },
+          durationMillis: ms
+        });
+      });
+    }
+
+    /* ---------- MapLibre fallback ---------- */
+    function satelliteStyle() {
+      return {
+        version: 8,
+        sources: {
+          esri: {
+            type: "raster",
+            tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: "Tiles © Esri — Esri, Maxar, Earthstar Geographics"
+          }
+        },
+        layers: [
+          { id: "bg", type: "background", paint: { "background-color": "#02060c" } },
+          { id: "sat", type: "raster", source: "esri" }
+        ]
+      };
+    }
+
+    async function createMapLibre() {
+      showBoot("Loading open satellite Earth…");
+      if (!window.maplibregl) await loadFirst(ML_JS);
+      if (state.map) { try { state.map.remove(); } catch (_) {} state.map = null; }
+      const map = new maplibregl.Map({
+        container: "map-root",
+        style: satelliteStyle(),
+        center: [78.9, 20.5],
+        zoom: 2.1,
+        pitch: 0,
+        maxPitch: 76,
+        attributionControl: { compact: true, customAttribution: "© OpenStreetMap · Esri" }
+      });
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("map timeout")), 12000);
+        map.once("load", () => { clearTimeout(t); resolve(); });
+      });
+      try { map.setProjection({ type: "globe" }); } catch (_) {}
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+      state.map = map;
+      setEngine("maplibre");
+      hideBoot();
+      requestAnimationFrame(() => { try { map.resize(); } catch (_) {} });
+      return map;
+    }
+
+    function engineLabel() {
+      if (state.engine === "cesium") return "Google Photorealistic 3D Tiles";
+      if (state.engine === "google3d") return "Google 3D Maps (photoreal)";
+      if (state.engine === "google2d") return "Google hybrid";
+      return "Open satellite (no photoreal tiles)";
+    }
+
+    async function startPhotoreal(key) {
+      try {
+        return await createCesiumEarth(key);
+      } catch (err) {
+        console.warn("Cesium 3D tiles failed", err);
+        toast("3D TILES FAILED", String(err.message || err) + " Trying Maps JavaScript 3D…");
+        try {
+          return await createMap3D(key);
+        } catch (err2) {
+          console.warn("Map3D failed", err2);
+          throw err;
+        }
+      }
+    }
+
+    async function flyToLocation(loc) {
+      const id = ++state.flyId;
+      destCard.classList.remove("is-on");
+      hideSuggest();
+      setMode("flying");
+      document.getElementById("flight-title").textContent = loc.name.toUpperCase();
+
+      if (state.engine === "cesium" && state.viewer) {
+        const stages = [
+          { h: 14000000, pitch: -88, heading: 0, dur: 1600, label: "EARTH" },
+          { h: 1800000, pitch: -62, heading: 8, dur: 1600, label: "COUNTRY" },
+          { h: 90000, pitch: -42, heading: 16, dur: 1500, label: "REGION" },
+          { h: 2800, pitch: -32, heading: 24, dur: 1600, label: "CITY" },
+          { h: 420, pitch: -26, heading: 28, dur: 1500, label: "DESTINATION" }
+        ];
+        for (const s of stages) {
+          if (id !== state.flyId) return;
+          document.getElementById("flight-stage").textContent = s.label;
+          await cesiumFly(loc.lng, loc.lat, s.h, s.heading, s.pitch, s.dur);
+        }
+      } else if (state.engine === "google3d" && state.g3d) {
+        const stages = [
+          { range: 12000000, tilt: 0, heading: 0, dur: 1600, label: "EARTH" },
+          { range: 1800000, tilt: 20, heading: 8, dur: 1600, label: "COUNTRY" },
+          { range: 80000, tilt: 45, heading: 16, dur: 1500, label: "REGION" },
+          { range: 4000, tilt: 60, heading: 22, dur: 1600, label: "CITY" },
+          { range: 700, tilt: 67, heading: 28, dur: 1400, label: "DESTINATION" }
+        ];
+        for (const s of stages) {
+          if (id !== state.flyId) return;
+          document.getElementById("flight-stage").textContent = s.label;
+          await g3dFly(state.g3d, loc, s.range, s.tilt, s.heading, s.dur);
+        }
+      } else if (state.map) {
+        const stages = [
+          { zoom: 3.2, pitch: 0, bearing: 0, dur: 1400, label: "EARTH" },
+          { zoom: 6.4, pitch: 20, bearing: 8, dur: 1400, label: "COUNTRY" },
+          { zoom: 10.2, pitch: 42, bearing: 16, dur: 1400, label: "REGION" },
+          { zoom: 14.8, pitch: 58, bearing: 22, dur: 1600, label: "CITY" },
+          { zoom: 16.6, pitch: 62, bearing: 28, dur: 1400, label: "DESTINATION" }
+        ];
+        for (const s of stages) {
+          if (id !== state.flyId) return;
+          document.getElementById("flight-stage").textContent = s.label;
+          state.map.flyTo({ center: [loc.lng, loc.lat], zoom: s.zoom, pitch: s.pitch, bearing: s.bearing, duration: s.dur, essential: true });
+          await new Promise((r) => { state.map.once("moveend", r); setTimeout(r, 8000); });
+        }
+      }
+      if (id !== state.flyId) return;
+      await enterExplore(loc);
+    }
+
+    async function enterExplore(loc) {
+      state.selected = loc;
+      document.getElementById("hud-name").textContent = loc.name.toUpperCase();
+      document.getElementById("hud-sub").textContent = loc.formattedAddress || "";
+      document.getElementById("hud-status").textContent = engineLabel();
+      setMode("explore");
+      try {
+        const photos = await findPhotos(loc.lat, loc.lng);
+        state.photos = photos;
+        if (photos.length) {
+          document.getElementById("gallery").classList.add("is-on");
+          document.getElementById("gallery-img").src = photos[0].url;
+          document.getElementById("gallery-cap").textContent = photos[0].attribution || "";
+        } else {
+          document.getElementById("gallery").classList.remove("is-on");
+        }
+      } catch (_) {
+        document.getElementById("gallery").classList.remove("is-on");
+      }
+    }
+
+    async function streetLevel() {
+      if (!state.selected) {
+        toast("PICK A PLACE", "Search and fly there first.");
+        return;
+      }
+      const loc = state.selected;
+      if (state.engine === "maplibre") {
+        const key = googleKey();
+        if (!key) {
+          toast("NEED GOOGLE KEY", "Photoreal 3D Tiles need a billed Map Tiles API key. Open KEYS.");
+          openLobby();
+          return;
+        }
+        try {
+          await startPhotoreal(key);
+          await cesiumFly(loc.lng, loc.lat, 180, 35, -22, 2200);
+          document.getElementById("hud-status").textContent = engineLabel() + " · street level";
+        } catch (err) {
+          toast("PHOTOREAL UNAVAILABLE", String(err.message || err));
+        }
+        return;
+      }
+      if (state.engine === "cesium") {
+        await cesiumFly(loc.lng, loc.lat, 180, 35, -22, 1800);
+        document.getElementById("hud-status").textContent = engineLabel() + " · street level";
+      } else if (state.engine === "google3d" && state.g3d) {
+        await g3dFly(state.g3d, loc, 220, 72, 40, 1800);
+        document.getElementById("hud-status").textContent = engineLabel() + " · street level";
+      }
+    }
+
+    /* ---------- UI ---------- */
+    function hideSuggest() {
+      suggestList.classList.remove("is-on");
+      suggestList.replaceChildren();
+    }
+    function renderSuggest(items) {
+      state.suggestions = items;
+      suggestList.replaceChildren();
+      if (!items.length) { hideSuggest(); return; }
+      items.forEach((it, i) => {
+        const li = document.createElement("li");
+        if (i === 0) li.classList.add("is-on");
+        li.innerHTML = '<div class="main"></div><div class="sub"></div>';
+        li.querySelector(".main").textContent = it.name;
+        li.querySelector(".sub").textContent = it.formattedAddress;
+        li.onmousedown = (e) => { e.preventDefault(); pick(it); };
+        suggestList.appendChild(li);
+      });
+      suggestList.classList.add("is-on");
+    }
+    async function doSearch(q) {
+      const seq = ++state.searchSeq;
+      try {
+        const items = await searchPlace(q);
+        if (seq === state.searchSeq) renderSuggest(items);
+      } catch (_) {
+        if (seq === state.searchSeq) hideSuggest();
+      }
+    }
+    const debouncedSearch = debounce(doSearch, 280);
+
+    function pick(loc) {
+      state.selected = loc;
+      hideSuggest();
+      document.getElementById("dest-name").textContent = loc.name.toUpperCase();
+      document.getElementById("dest-sub").textContent = loc.formattedAddress || "";
+      document.getElementById("dest-coords").innerHTML = fmtLat(loc.lat) + "<br>" + fmtLng(loc.lng);
+      destCard.classList.add("is-on");
+      searchInput.value = loc.name;
+      setMode("selected");
+    }
+
+    function saveKeysFrom(mlyEl, gmapEl) {
+      const mly = (mlyEl.value || "").trim();
+      const gmap = (gmapEl.value || "").trim();
+      writeKey(LS_MLY, mly);
+      writeKey(LS_GMAP, gmap);
+      try { localStorage.setItem(LS_REMEMBER, document.getElementById("lobby-remember").checked ? "1" : "0"); } catch (_) {}
+      return { mly: mly, gmap: gmap };
+    }
+    function fillKeyFields() {
+      const mly = mapillaryToken();
+      const gmap = googleKey();
+      ["lobby-mly", "mly-token"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = mly; });
+      ["lobby-gmap", "gmap-token"].forEach((id) => { const el = document.getElementById(id); if (el) el.value = gmap; });
+      document.getElementById("enter-worlds").textContent = gmap ? "ENTER PHOTOREAL 3D" : "ENTER WORLDS";
+    }
+    function openLobby() {
+      fillKeyFields();
+      setMode("lobby");
+    }
+
+    async function bootWorld(wantGoogle) {
+      const keys = saveKeysFrom(document.getElementById("lobby-mly"), document.getElementById("lobby-gmap"));
+      setLobbyStatus("Starting…");
+      let photoreal = false;
+      if (wantGoogle && keys.gmap) {
+        try {
+          await startPhotoreal(keys.gmap);
+          photoreal = true;
+        } catch (err) {
+          console.warn(err);
+          setLobbyStatus("Photoreal failed — opening satellite.");
+          toast("PHOTOREAL 3D TILES FAILED", String(err.message || err));
+          destroyEarth();
+        }
+      }
+      if (!photoreal) {
+        try { await createMapLibre(); }
+        catch (err) {
+          hideBoot();
+          setLobbyStatus("Map failed to load.");
+          toast("MAP UNAVAILABLE", String(err.message || err));
+          return;
+        }
+      }
+      setMode("search");
+      hideBoot();
+      setLobbyStatus("");
+      requestAnimationFrame(() => { if (state.map) try { state.map.resize(); } catch (_) {} searchInput.focus(); });
+    }
+
+    function bindUi() {
+      fillKeyFields();
+      document.getElementById("enter-worlds").onclick = () => bootWorld(true);
+      document.getElementById("enter-skip").onclick = () => bootWorld(false);
+      searchInput.addEventListener("input", () => {
+        destCard.classList.remove("is-on");
+        if (state.mode === "selected") setMode("search");
+        debouncedSearch(searchInput.value);
+      });
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (state.suggestions[0]) pick(state.suggestions[0]);
+          else doSearch(searchInput.value).then(() => { if (state.suggestions[0]) pick(state.suggestions[0]); });
+        }
+        if (e.key === "Escape") hideSuggest();
+      });
+      document.getElementById("chips").addEventListener("click", (e) => {
+        const c = e.target.closest("[data-q]");
+        if (!c) return;
+        searchInput.value = c.dataset.q;
+        doSearch(c.dataset.q).then(() => { if (state.suggestions[0]) pick(state.suggestions[0]); });
+      });
+      document.getElementById("go-there").onclick = () => { if (state.selected) flyToLocation(state.selected); };
+      document.getElementById("dest-close").onclick = () => { destCard.classList.remove("is-on"); setMode("search"); };
+      document.getElementById("exit-btn").onclick = () => {
+        state.flyId++;
+        state.selected = null;
+        if (state.engine === "cesium" && state.viewer) {
+          cesiumFly(78.9, 20.5, 16000000, 0, -90, 1800);
+        } else if (state.engine === "google3d" && state.g3d) {
+          g3dFly(state.g3d, { lat: 20.5, lng: 78.9 }, 16000000, 0, 0, 1800);
+        } else if (state.map) {
+          state.map.flyTo({ center: [78.9, 20.5], zoom: 2.1, pitch: 0, bearing: 0, duration: 1800 });
+        }
+        setMode("search");
+        searchInput.value = "";
+        document.getElementById("gallery").classList.remove("is-on");
+      };
+      document.getElementById("explore-3d").onclick = streetLevel;
+      document.getElementById("help-btn").onclick = () => {
+        document.getElementById("help-panel").classList.toggle("is-on");
+        document.getElementById("sources-panel").classList.remove("is-on");
+      };
+      document.getElementById("sources-btn").onclick = () => {
+        document.getElementById("sources-panel").classList.toggle("is-on");
+        document.getElementById("help-panel").classList.remove("is-on");
+        fillKeyFields();
+      };
+      document.getElementById("keys-btn").onclick = openLobby;
+      document.getElementById("mly-save").onclick = () => {
+        saveKeysFrom(document.getElementById("mly-token"), document.getElementById("gmap-token"));
+        toast("KEYS SAVED", "Press APPLY 3D TILES to reload photoreal Earth.");
+      };
+      document.getElementById("apply-earth").onclick = async () => {
+        const { gmap } = saveKeysFrom(document.getElementById("mly-token"), document.getElementById("gmap-token"));
+        document.getElementById("sources-panel").classList.remove("is-on");
+        if (!gmap) {
+          destroyEarth();
+          try { await createMapLibre(); toast("OPEN EARTH", "Google key cleared."); } catch (e) { toast("MAP FAILED", String(e.message || e)); }
+          return;
+        }
+        try {
+          if (state.map) { try { state.map.remove(); } catch (_) {} state.map = null; }
+          await startPhotoreal(gmap);
+          toast("PHOTOREAL 3D", "Google 3D Tiles are live.");
+        } catch (err) {
+          toast("PHOTOREAL FAILED", String(err.message || err));
+          try { await createMapLibre(); } catch (_) {}
+        }
+      };
+    }
+
+    window.__worldsEnter = bootWorld;
+    try {
+      bindUi();
+      setLobbyStatus("Ready.");
+    } catch (err) {
+      console.error(err);
+      setLobbyStatus("UI failed: " + (err && err.message));
+    }
+  </script>
+</body>
+</html>
